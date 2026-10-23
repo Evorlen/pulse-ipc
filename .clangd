@@ -1,0 +1,9 @@
+# Export build/debug/compile_commands.json from a build configured for C++23.
+# Read the language standard, include paths, defines, and warnings from it.
+CompileFlags:
+  # If you use a different build directory, change this to the path to your compile_commands.json.
+  CompilationDatabase: build/debug
+
+# If clangd cannot find or infer a compile command, configure the editor's
+# initializationOptions.fallbackFlags, e.g. [-std=c++23, -Wall, -Wextra, -Wpedantic].
+# CompileFlags.Add would modify database commands as well as fallback commands.

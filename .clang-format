@@ -1,0 +1,259 @@
+---
+# ======================================================================
+# ClangFormat configuration
+#
+# Verified with clang-format 22.1.8
+# ======================================================================
+
+# For C++ code, based on LLVM style
+Language: Cpp
+BasedOnStyle: LLVM
+# 22.1.8 has no c++23 value here; configure the compiler standard in the build.
+Standard: Latest
+
+# ======================================================================
+# Indentation and line width
+#
+# Example
+#
+# ```cpp
+# class Example
+# {
+# public:
+#     int value;
+# };
+# ```
+# ======================================================================
+UseTab: Never                                       # Do not use Tab for indentation
+IndentWidth: 4                                      # Use 4 spaces for indentation
+ContinuationIndentWidth: 4                          # Indent continuation relative to the original line by 4 spaces
+ConstructorInitializerIndentWidth: 4                # Indent constructor initializer list by 4 spaces
+AccessModifierOffset: -4                            # public etc. modifiers are indented -4 from class, same level as class
+ColumnLimit: 100                                    # Target line width is 100 columns, not a hard limit
+PenaltyReturnTypeOnItsOwnLine: 200                  # Penalty for putting the return type on its own line; 200 prefers keeping it with the function name
+BreakTemplateDeclarations: Yes                      # Break template declarations
+
+# ======================================================================
+# Brace wrapping
+#
+# Type, function, namespace { break; if/for/while, else/catch keep in the same line.
+#
+# Example
+#
+# ```cpp
+# class Example
+# {
+# public:
+#     void foo()
+#     {
+#         if (ok) {
+#             return;
+#         } else {
+#             return;
+#         }
+#     }
+# };
+# ```
+# ======================================================================
+BreakBeforeBraces: Custom                           # Do not use a preset; configure each option below
+BraceWrapping:
+  AfterCaseLabel: false                             # Do not break { onto its own line after case
+  AfterClass: true                                  # Break before { after class
+  AfterControlStatement: Never                      # Keep { on the same line as if/for/while
+  AfterEnum: true                                   # Break before { after enum
+  AfterExternBlock: true                            # Break before { after extern "C"
+  AfterFunction: true                               # Break before { after a function definition
+  AfterNamespace: true                              # Break before { after namespace
+  AfterStruct: true                                 # Break before { after struct
+  AfterUnion: true                                  # Break before { after union
+  BeforeCatch: false                                # Keep } catch on the same line
+  BeforeElse: false                                 # Keep } else on the same line
+  BeforeLambdaBody: false                           # Do not force a break before a lambda {
+  BeforeWhile: false                                # Keep while on the same line as } in do-while
+  IndentBraces: false                               # Do not indent braces themselves
+  SplitEmptyFunction: false                         # Do not split wrapped empty-function braces; with the short-function rule this can be void f() {}
+  SplitEmptyRecord: false                           # Keep {} of an empty class or struct on one line, e.g. class C then {};
+  SplitEmptyNamespace: false                        # Keep {} of an empty namespace on one line
+
+# ======================================================================
+# Pointer and reference style
+#
+# Example
+#
+# ```cpp
+# int * value;
+# int & value;
+# ```
+# ======================================================================
+DerivePointerAlignment: false                       # Do not infer the style from code; use the configured rules
+PointerAlignment: Middle                            # Middle alignment, with a space on each side
+ReferenceAlignment: Pointer                         # Align references the same way as pointers
+QualifierAlignment: Leave                           # Leave const and other qualifiers as written
+
+# ======================================================================
+# Multiline parameters and initializer lists
+#
+# Example
+#
+# ```cpp
+# [[nodiscard]]
+# int value(int a, int b);
+# int calculate_value(
+#     int argument_one,
+#     int argument_two,
+#     int argument_three,
+#     int argument_four,
+#     int argument_five
+# );
+# Foo(int a, int b)
+#     : a_(a)
+#     , b_(b)
+# {}
+# ```
+# ======================================================================
+# The if bracket options express the intended wrapping. In 22.1.8, a plain if
+# may keep text after ( with ContinuationIndentWidth >= 4. Keep four-space
+# continuations; see https://github.com/llvm/llvm-project/issues/181293.
+BreakAfterAttributes: Always                        # Always break after an attribute group, including before variables and control statements
+AlignAfterOpenBracket: true                         # When a break is not forced, align the continuation with the first item after (
+BreakAfterOpenBracketBracedList: true               # Break after { when a braced list exceeds the column limit
+BreakAfterOpenBracketFunction: true                 # Break after ( when function parameters or arguments exceed the column limit
+BreakAfterOpenBracketIf: true                       # Request a break after ( when an if condition exceeds the column limit; see limitation above
+BreakAfterOpenBracketLoop: false                    # When a for/while condition breaks, do not force a break right after (
+BreakAfterOpenBracketSwitch: false                  # When a switch condition breaks, do not force a break right after (
+BreakBeforeCloseBracketBracedList: true             # Put the closing brace of a multiline braced list on its own line
+BreakBeforeCloseBracketFunction: true               # Put the closing parenthesis of a multiline function call or declaration on its own line
+BreakBeforeCloseBracketIf: true                     # Put ) on its own line when the if condition has a break immediately after (
+BreakBeforeCloseBracketLoop: false                  # Do not force the closing parenthesis of a multiline for/while onto its own line
+BreakBeforeCloseBracketSwitch: false                # Do not force the closing parenthesis of a multiline switch condition onto its own line
+BinPackArguments: false                             # Put call arguments all on one line, or one argument per line
+BinPackParameters: OnePerLine                       # When parameters do not fit, put one parameter per line
+BinPackLongBracedList: false                        # Do not pack initializer lists even when they have more than 20 items
+AllowAllArgumentsOnNextLine: false                  # Do not pack every call argument onto the line after (
+AllowAllParametersOfDeclarationOnNextLine: false    # Format parameters the same way as call arguments above
+ExperimentalAutoDetectBinPacking: false             # Do not infer the style from code; use the configured rules
+BreakConstructorInitializers: BeforeComma           # Break constructor initializer lists before the comma
+PackConstructorInitializers: Never                  # Do not pack constructor initializers; one initializer per line
+BreakInheritanceList: BeforeComma                   # Break inheritance lists before the comma
+
+# ======================================================================
+# Do not collapse implementations and control flow onto one line
+#
+# Example
+#
+# ```cpp
+# if (condition) {
+#     return;
+# }
+# ```
+# ======================================================================
+AllowShortBlocksOnASingleLine: Never                # Do not collapse a block onto one line
+AllowShortFunctionsOnASingleLine: Empty             # Allow a function on one line only when its body is empty
+AllowShortIfStatementsOnASingleLine: Never          # Do not collapse an if statement onto one line
+AllowShortLoopsOnASingleLine: false                 # Do not collapse for/while and similar loops onto one line
+AllowShortLambdasOnASingleLine: Empty               # Allow a lambda on one line only when its body is empty
+AllowShortCaseLabelsOnASingleLine: false            # Do not collapse a case label onto one line
+AllowShortEnumsOnASingleLine: false                 # Do not collapse an enum onto one line
+
+# ======================================================================
+# Initializer lists and strings
+#
+# Example
+#
+# ```cpp
+# return Foo {1, 2, 3};
+# ```
+# ======================================================================
+Cpp11BracedListStyle: FunctionCall                  # Format braced initialization like a function call: no extra inner spaces, continuation indent
+SpaceBeforeCpp11BracedList: true                    # Put one space between a type or name and the opening brace of an initializer list
+SpaceInEmptyBraces: Never                           # Do not put spaces inside empty braces, e.g. Foo {}
+BreakStringLiterals: false                          # Do not split long string literals; they may exceed the column limit
+
+# ======================================================================
+# Comments
+#
+# Example
+#
+# ```cpp
+# namespace a::b::c
+# {
+#
+# class Foo; // comment
+#
+# } // namespace a::b::c
+# ```
+#
+# ======================================================================
+ReflowComments: Never                               # Do not reflow or reindent comment text
+AlignTrailingComments:
+  Kind: Never                                       # Do not align trailing comments to the same column
+SpacesBeforeTrailingComments: 1                     # Put one space before a trailing comment
+FixNamespaceComments: true                          # Fix namespace closing comments automatically
+CompactNamespaces: false                            # Do not use compact namespace syntax
+
+# ======================================================================
+# Sort within existing include groups, with no category or main-header priority
+# Include spelling determines the order, including the "" and <> delimiters.
+#
+# Example
+#
+# ```cpp
+# #include "alpha.hpp"
+# #include "clang/AST.h"
+# #include "widget.hpp"
+# #include <vector>
+#
+# #include "bar.hpp"
+# #include "foo.hpp"
+# ```
+# ======================================================================
+SortIncludes: CaseSensitive                         # Sort by include spelling, case-sensitively
+IncludeBlocks: Preserve                             # Preserve the existing include-block layout
+IncludeCategories:
+  - Regex: '.*'                                     # Use one category instead of inheriting LLVM's include priorities
+    Priority: 1
+IncludeIsMainRegex: '$^'                            # Never match; disable automatic main-header priority
+
+# ======================================================================
+# Access specifiers, case labels, preprocessor directives, and blank lines
+#
+# Example
+#
+# ```cpp
+# class Example
+# {
+# public:
+#     void foo();
+#
+# private:
+#     int value_;
+# };
+#
+# switch (value) {
+# case 0:
+#     break;
+# default:
+#     break;
+# }
+# ```
+# ======================================================================
+IndentAccessModifiers: false                        # Do not indent access specifiers such as public an extra level
+EmptyLineAfterAccessModifier: Never                 # Do not add a blank line after an access specifier
+EmptyLineBeforeAccessModifier: Always               # Add a blank line before an access specifier, except the first one in a type
+IndentCaseLabels: false                             # Do not indent case relative to switch; keep them at the same level
+IndentPPDirectives: None                            # Do not indent preprocessor directives such as #if and #define
+KeepEmptyLines:
+  AtStartOfBlock: false                             # Remove blank lines after { at the start of a block
+MaxEmptyLinesToKeep: 1                              # Keep at most one consecutive blank line
+SeparateDefinitionBlocks: Leave                     # Leave blank lines between definition blocks as written
+
+# ======================================================================
+# Structural changes (off by default)
+#
+# The first version only formats layout. It does not add or remove braces or semicolons, so the code structure stays unchanged.
+# ======================================================================
+InsertBraces: false                                 # Do not insert braces for if, for, while, and similar statements
+RemoveBracesLLVM: false                             # Do not remove optional braces using the LLVM rule
+RemoveParentheses: Leave                            # Leave parentheses as written; do not drop redundant ()
+RemoveSemicolon: false                              # Do not remove the semicolon after } of a non-empty function definition
+...
