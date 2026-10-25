@@ -1,0 +1,40 @@
+# Common CMake build directories, at any depth.
+build/
+build-*/
+build_*/
+cmake-build-*/
+
+# CMake-generated files, including in custom build directories.
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+.cmake/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+
+# CMake-generated Make/Ninja files.
+Makefile
+build.ninja
+build-*.ninja
+rules.ninja
+.ninja_deps
+.ninja_log
+
+# CTest and CPack output.
+CTestTestfile.cmake
+DartConfiguration.tcl
+Testing/
+CPackConfig.cmake
+CPackSourceConfig.cmake
+_CPack_Packages/
+
+# Dependencies populated by FetchContent.
+_deps/
+
+# Local presets.
+# Keep shared CMakePresets.json tracked.
+CMakeUserPresets.json
+
+# Clangd files.
+.clangd

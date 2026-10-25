@@ -1,0 +1,22 @@
+Checks: >
+  -*,
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  modernize-*
+
+WarningsAsErrors: ''
+
+# Filter reported header diagnostics; included headers are still parsed.
+# Accept paths relative to the checkout root (with optional ./ prefixes),
+# and paths under a checkout named pulse-ipc.
+# If the checkout directory is renamed, update the pulse-ipc branch below.
+# This filter does not restrict diagnostics from the main source file.
+HeaderFilterRegex: '(^(\./)*|(^|/)pulse-ipc/)(src|include|tests|benchmarks|examples)/'
+
+# System-header status comes from compiler search paths, such as -isystem or
+# CMake SYSTEM include directories, rather than the directory name.
+SystemHeaders: false
+
+FormatStyle: file
