@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Evorlen
 // SPDX-License-Identifier: Apache-2.0
 
+#pragma once
+
 #include <concepts>
 #include <cstdint>
+#include <type_traits>
 #include <utility>
-
-#pragma once
 
 namespace pulse::common
 {
