@@ -16,6 +16,7 @@ namespace pulse::common
 enum class error_category : std::uint8_t
 {
     Unknown = 0,
+    SPSC = 1,
 };
 
 // Traits for error types.

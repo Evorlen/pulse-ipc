@@ -26,7 +26,7 @@ class spsc_queue_consumer final
 private:
     friend class spsc_queue<T, Capacity>;
     using storage_type = spsc_queue_storage<T, Capacity>;
-    using slot_type = typename storage_type::spsc_queue_slot;
+    using slot_type = spsc_queue_slot<T>;
 
     explicit spsc_queue_consumer(storage_type & storage) noexcept
         : consumer_cache_line_(&storage.consumer_cache_line())

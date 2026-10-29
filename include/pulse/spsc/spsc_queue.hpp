@@ -6,8 +6,11 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <span>
+#include <utility>
 
+#include "pulse/common/result.hpp"
 #include "pulse/concepts/size.hpp"
 #include "pulse/concepts/type.hpp"
 #include "pulse/spsc/spsc_consumer.hpp"
@@ -22,17 +25,18 @@ template <concepts::QueueElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
 class spsc_queue final
 {
-public:
-    explicit spsc_queue(std::uint64_t schema_id = 0)
-        : storage_(schema_id)
-    {}
+private:
+    using storage_type = spsc_queue_storage<T, Capacity>;
 
+public:
+    // The private key restricts this constructor to validated factory results.
     explicit spsc_queue(
-        std::span<std::byte> memory,
-        spsc_queue_storage_mode mode,
-        std::uint64_t schema_id = 0
-    )
-        : storage_(memory, mode, schema_id)
+        typename storage_type::construction_key key,
+        typename storage_type::region * region,
+        bool owns_memory,
+        bool owns_state
+    ) noexcept
+        : storage_(key, region, owns_memory, owns_state)
     {}
 
     spsc_queue(const spsc_queue &) = delete;
@@ -46,6 +50,46 @@ public:
     ~spsc_queue() noexcept = default;
 
 public:
+    // Allocate one aligned region and initialize an empty queue.
+    [[nodiscard]]
+    static auto create(std::uint64_t schema_id = 0) noexcept -> common::result<spsc_queue>
+    {
+        auto region_memory = storage_type::_allocate(schema_id);
+        if (!region_memory) {
+            return std::unexpected(region_memory.error());
+        }
+
+        return common::result<spsc_queue>(
+            std::in_place,
+            typename storage_type::construction_key {},
+            *region_memory,
+            true,
+            true
+        );
+    }
+
+    // The memory, lifetime and synchronization requirements are the same as storage_type::create.
+    [[nodiscard]]
+    static auto create(
+        std::span<std::byte> memory,
+        spsc_queue_storage_mode mode,
+        std::uint64_t schema_id = 0
+    ) noexcept -> common::result<spsc_queue>
+    {
+        auto region_memory = storage_type::_bind(memory, mode, schema_id);
+        if (!region_memory) {
+            return std::unexpected(region_memory.error());
+        }
+
+        return common::result<spsc_queue>(
+            std::in_place,
+            typename storage_type::construction_key {},
+            *region_memory,
+            false,
+            mode == spsc_queue_storage_mode::initialize
+        );
+    }
+
     // Only one producer may be active for a region, including through other attached queues.
     // Retire the previous producer and synchronize the handoff before attaching a replacement.
     // Endpoints must not outlive the queue state owner. Attachment does not claim a shared lock.
@@ -102,7 +146,7 @@ public:
     }
 
 private:
-    spsc_queue_storage<T, Capacity> storage_;
+    storage_type storage_;
 };
 
 } // namespace pulse::spsc

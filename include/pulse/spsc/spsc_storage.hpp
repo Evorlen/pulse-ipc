@@ -7,16 +7,19 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <limits>
 #include <memory>
 #include <new>
 #include <span>
-#include <stdexcept>
 #include <type_traits>
+#include <utility>
 
+#include "pulse/common/result.hpp"
 #include "pulse/concepts/size.hpp"
 #include "pulse/concepts/type.hpp"
 #include "pulse/config/config.hpp"
+#include "pulse/spsc/spsc_error.hpp"
 
 namespace pulse::spsc
 {
@@ -41,6 +44,8 @@ struct alignas(config::cache_line_alignment) spsc_queue_header final
     std::array<std::byte, 24> reserved {};
 };
 
+static_assert(sizeof(spsc_queue_header) == 128, "the size of spsc_queue_header must be 128 bytes.");
+
 // Cache line for the producer and consumer.
 struct alignas(config::cache_line_alignment) spsc_queue_cache_line final
 {
@@ -60,6 +65,35 @@ enum class spsc_queue_storage_mode : std::uint8_t
     attach = 1,
 };
 
+// State of the queue.
+enum class spsc_queue_state : std::uint32_t
+{
+    Ready = 1,
+};
+
+// Slot for the queue.
+template <concepts::QueueElementType T>
+struct alignas(T) spsc_queue_slot final
+{
+public:
+    // Return the address of the slot.
+    [[nodiscard]]
+    auto address() noexcept -> T *
+    {
+        return reinterpret_cast<T *>(storage.data());
+    }
+
+    // Only call when this slot contains a live T.
+    [[nodiscard]]
+    auto element() noexcept -> T *
+    {
+        return std::launder(address());
+    }
+
+public:
+    std::array<std::byte, sizeof(T)> storage;
+};
+
 template <concepts::QueueElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
 class spsc_queue;
@@ -72,81 +106,66 @@ template <concepts::QueueElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
 class spsc_queue_consumer;
 
+// Storage for the queue.
 template <concepts::QueueElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
 class spsc_queue_storage final
 {
 private:
-    friend class spsc_queue_producer<T, Capacity>;
-    friend class spsc_queue_consumer<T, Capacity>;
+    friend class spsc_queue<T, Capacity>;
 
-    struct alignas(T) spsc_queue_slot final
+    // Allow in-place construction by result without exposing unchecked construction.
+    class construction_key final
     {
-        std::array<std::byte, sizeof(T)> storage;
+    private:
+        friend class spsc_queue_storage;
+        friend class spsc_queue<T, Capacity>;
 
-        [[nodiscard]]
-        auto address() noexcept -> T *
-        {
-            return reinterpret_cast<T *>(storage.data());
-        }
-
-        // Only call when this slot contains a live T.
-        [[nodiscard]]
-        auto element() noexcept -> T *
-        {
-            return std::launder(address());
-        }
+    public:
+        construction_key() noexcept = default;
     };
 
     static constexpr std::size_t slots_alignment = alignof(T) > config::cache_line_alignment
                                                        ? alignof(T)
                                                        : config::cache_line_alignment;
 
-    // This is the entire shared region. It contains no process-local pointers or caches.
+    // The entire shared region. It contains no process-local pointers or caches.
     struct region final
     {
         spsc_queue_header header;
         spsc_queue_cache_line producer_cache_line;
         spsc_queue_cache_line consumer_cache_line;
-        alignas(slots_alignment) std::array<spsc_queue_slot, Capacity> slots;
+        alignas(slots_alignment) std::array<spsc_queue_slot<T>, Capacity> slots;
     };
 
     static_assert(std::is_standard_layout_v<region>);
-    static_assert(sizeof(spsc_queue_slot) <= std::numeric_limits<std::uint32_t>::max());
+    static_assert(sizeof(spsc_queue_slot<T>) <= std::numeric_limits<std::uint32_t>::max());
     static_assert(alignof(T) <= std::numeric_limits<std::uint32_t>::max());
 
     static constexpr std::uint64_t magic = 0x50554C5345535053;
     static constexpr std::uint16_t version_major = 1;
     static constexpr std::uint16_t version_minor = 0;
-    static constexpr std::uint32_t ready_state = 1;
+    static constexpr std::uint32_t ready_state =
+        static_cast<std::uint32_t>(spsc_queue_state::Ready);
 
 public:
-    // Allocate one aligned region and initialize an empty queue.
-    explicit spsc_queue_storage(std::uint64_t schema_id = 0)
-        : region_(new region)
-        , owns_memory_(true)
-        , owns_state_(true)
-    {
-        _initialize_header(*region_, schema_id);
-    }
-
-    // Initialization requires unused, writable raw storage and exclusive access.
-    // Attachment requires a live region initialized with the same T, Capacity and ABI.
-    // Initialization must finish and be synchronized with the caller before attachment.
-    // schema_id must match the initializer; zero provides no application-specific type identity.
     explicit spsc_queue_storage(
-        std::span<std::byte> memory,
-        spsc_queue_storage_mode mode,
-        std::uint64_t schema_id = 0
-    )
-        : region_(_bind(memory, mode, schema_id))
-        , owns_memory_(false)
-        , owns_state_(mode == spsc_queue_storage_mode::initialize)
+        construction_key,
+        region * region,
+        bool owns_memory,
+        bool owns_state
+    ) noexcept
+        : region_(region)
+        , owns_memory_(owns_memory)
+        , owns_state_(owns_state)
     {}
 
     spsc_queue_storage(const spsc_queue_storage &) = delete;
+
     auto operator=(const spsc_queue_storage &) -> spsc_queue_storage & = delete;
+
     spsc_queue_storage(spsc_queue_storage &&) = delete;
+
     auto operator=(spsc_queue_storage &&) -> spsc_queue_storage & = delete;
 
     // The state owner must outlive all attached views and endpoints.
@@ -172,42 +191,92 @@ public:
     }
 
 public:
+    // Allocate one aligned region and initialize an empty queue.
+    [[nodiscard]]
+    static auto create(std::uint64_t schema_id = 0) noexcept -> common::result<spsc_queue_storage>
+    {
+        auto region_memory = _allocate(schema_id);
+        if (!region_memory) {
+            return std::unexpected(region_memory.error());
+        }
+
+        return common::result<spsc_queue_storage>(
+            std::in_place,
+            construction_key {},
+            *region_memory,
+            true,
+            true
+        );
+    }
+
+    // Initialization requires unused, writable raw storage and exclusive access.
+    // Attachment requires a live region initialized with the same T, Capacity and ABI.
+    // Initialization must finish and be synchronized with the caller before attachment.
+    // schema_id must match the initializer; zero provides no application-specific type identity.
+    [[nodiscard]]
+    static auto create(
+        std::span<std::byte> memory,
+        spsc_queue_storage_mode mode,
+        std::uint64_t schema_id = 0
+    ) noexcept -> common::result<spsc_queue_storage>
+    {
+        auto region_memory = _bind(memory, mode, schema_id);
+        if (!region_memory) {
+            return std::unexpected(region_memory.error());
+        }
+
+        return common::result<spsc_queue_storage>(
+            std::in_place,
+            construction_key {},
+            *region_memory,
+            false,
+            mode == spsc_queue_storage_mode::initialize
+        );
+    }
+
+    // The required size of the shared region.
     [[nodiscard]]
     static constexpr auto required_bytes() noexcept -> std::size_t
     {
         return sizeof(region);
     }
 
+    // The required alignment of the shared region.
     [[nodiscard]]
     static constexpr auto required_alignment() noexcept -> std::size_t
     {
         return alignof(region);
     }
 
+    // Return the header of the shared region.
     [[nodiscard]]
     auto header() const noexcept -> const spsc_queue_header &
     {
         return region_->header;
     }
 
+    // Return the producer cache line of the shared region.
     [[nodiscard]]
     auto producer_cache_line() noexcept -> spsc_queue_cache_line &
     {
         return region_->producer_cache_line;
     }
 
+    // Return the producer cache line of the shared region.
     [[nodiscard]]
     auto producer_cache_line() const noexcept -> const spsc_queue_cache_line &
     {
         return region_->producer_cache_line;
     }
 
+    // Return the consumer cache line of the shared region.
     [[nodiscard]]
     auto consumer_cache_line() noexcept -> spsc_queue_cache_line &
     {
         return region_->consumer_cache_line;
     }
 
+    // Return the consumer cache line of the shared region.
     [[nodiscard]]
     auto consumer_cache_line() const noexcept -> const spsc_queue_cache_line &
     {
@@ -217,12 +286,25 @@ public:
     // Return the slot at the given index.
     // The caller must ensure that the index is valid.
     [[nodiscard]]
-    auto slot(std::size_t index) noexcept -> spsc_queue_slot &
+    auto slot(std::size_t index) noexcept -> spsc_queue_slot<T> &
     {
         return region_->slots[index];
     }
 
 private:
+    // Allocate and initialize a region for either a storage owner or a queue owner.
+    static auto _allocate(std::uint64_t schema_id) noexcept -> common::result<region *>
+    {
+        auto * region_memory = new (std::nothrow) region;
+        if (region_memory == nullptr) {
+            return std::unexpected(common::error {spsc_error_code::StorageAllocationFailed});
+        }
+
+        _initialize_header(*region_memory, schema_id);
+        return region_memory;
+    }
+
+    // Initialize the header of the shared region.
     static auto _initialize_header(region & value, std::uint64_t schema_id) noexcept -> void
     {
         auto & header = value.header;
@@ -234,21 +316,27 @@ private:
         header.capacity = Capacity;
         header.slot_size = sizeof(T);
         header.slot_alignment = alignof(T);
-        header.slot_stride = sizeof(spsc_queue_slot);
+        header.slot_stride = sizeof(spsc_queue_slot<T>);
         header.slots_offset = offsetof(region, slots);
         header.schema_id = schema_id;
         header.state.store(ready_state, std::memory_order_release);
     }
 
-    static auto
-    _bind(std::span<std::byte> memory, spsc_queue_storage_mode mode, std::uint64_t schema_id)
-        -> region *
+    // Bind the shared region to the memory.
+    static auto _bind(
+        std::span<std::byte> memory,
+        spsc_queue_storage_mode mode,
+        std::uint64_t schema_id
+    ) noexcept -> common::result<region *>
     {
-        if (memory.data() == nullptr || memory.size() < required_bytes()) {
-            throw std::invalid_argument("spsc queue storage is null or too small");
+        if (memory.data() == nullptr) {
+            return std::unexpected(common::error {spsc_error_code::StorageNull});
+        }
+        if (memory.size() < required_bytes()) {
+            return std::unexpected(common::error {spsc_error_code::StorageTooSmall});
         }
         if (reinterpret_cast<std::uintptr_t>(memory.data()) % required_alignment() != 0) {
-            throw std::invalid_argument("spsc queue storage is not properly aligned");
+            return std::unexpected(common::error {spsc_error_code::StorageNotAligned});
         }
 
         if (mode == spsc_queue_storage_mode::initialize) {
@@ -257,24 +345,25 @@ private:
             return value;
         }
         if (mode != spsc_queue_storage_mode::attach) {
-            throw std::invalid_argument("invalid spsc queue storage mode");
+            return std::unexpected(common::error {spsc_error_code::StorageInvalidMode});
         }
 
         // Inspect the common header before treating the region as this specialization.
         const auto & header = *std::launder(reinterpret_cast<spsc_queue_header *>(memory.data()));
         if (header.state.load(std::memory_order_acquire) != ready_state) {
-            throw std::invalid_argument("spsc queue storage is not ready");
+            return std::unexpected(common::error {spsc_error_code::StorageNotReady});
         }
         if (header.magic != magic || header.version_major != version_major ||
             header.version_minor != version_minor ||
             header.header_size != sizeof(spsc_queue_header) ||
             header.region_size != sizeof(region) || header.capacity != Capacity ||
             header.slot_size != sizeof(T) || header.slot_alignment != alignof(T) ||
-            header.slot_stride != sizeof(spsc_queue_slot) ||
+            header.slot_stride != sizeof(spsc_queue_slot<T>) ||
             header.slots_offset != offsetof(region, slots) || header.schema_id != schema_id ||
             header.flags != 0) {
-            throw std::invalid_argument("incompatible spsc queue storage header");
+            return std::unexpected(common::error {spsc_error_code::StorageIncompatibleHeader});
         }
+
         return std::launder(reinterpret_cast<region *>(memory.data()));
     }
 
