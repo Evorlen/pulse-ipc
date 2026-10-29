@@ -24,6 +24,9 @@
 namespace pulse::spsc
 {
 
+static_assert(std::atomic<std::uint32_t>::is_always_lock_free, "std::atomic<std::uint32_t> must be always lock-free.");
+static_assert(std::atomic<std::uint64_t>::is_always_lock_free, "std::atomic<std::uint64_t> must be always lock-free.");
+
 // Header for the shared queue.
 // With 64-byte cache lines, the header occupies two cache lines.
 struct alignas(config::cache_line_alignment) spsc_queue_header final
@@ -121,7 +124,7 @@ private:
         friend class spsc_queue_storage;
         friend class spsc_queue<T, Capacity>;
 
-    public:
+    private:
         construction_key() noexcept = default;
     };
 

@@ -29,16 +29,6 @@ private:
     using storage_type = spsc_queue_storage<T, Capacity>;
 
 public:
-    // The private key restricts this constructor to validated factory results.
-    explicit spsc_queue(
-        typename storage_type::construction_key key,
-        typename storage_type::region * region,
-        bool owns_memory,
-        bool owns_state
-    ) noexcept
-        : storage_(key, region, owns_memory, owns_state)
-    {}
-
     spsc_queue(const spsc_queue &) = delete;
 
     auto operator=(const spsc_queue &) -> spsc_queue & = delete;
@@ -48,6 +38,17 @@ public:
     auto operator=(spsc_queue &&) -> spsc_queue & = delete;
 
     ~spsc_queue() noexcept = default;
+
+public:
+    // The private key restricts this constructor to validated factory results.
+    explicit spsc_queue(
+        typename storage_type::construction_key key,
+        typename storage_type::region * region,
+        bool owns_memory,
+        bool owns_state
+    ) noexcept
+        : storage_(key, region, owns_memory, owns_state)
+    {}
 
 public:
     // Allocate one aligned region and initialize an empty queue.

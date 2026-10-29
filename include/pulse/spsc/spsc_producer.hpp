@@ -27,19 +27,23 @@ private:
     using storage_type = spsc_queue_storage<T, Capacity>;
     using slot_type = spsc_queue_slot<T>;
 
-    explicit spsc_queue_producer(storage_type & storage) noexcept
-        : producer_cache_line_(&storage.producer_cache_line())
-        , consumer_cache_line_(&storage.consumer_cache_line())
-        , slots_(&storage.slot(0))
-        , local_write_seq_(producer_cache_line_->seq.load(std::memory_order_relaxed))
-        , cached_read_seq_(consumer_cache_line_->seq.load(std::memory_order_acquire))
-    {}
-
 public:
     spsc_queue_producer(const spsc_queue_producer &) = delete;
+
     auto operator=(const spsc_queue_producer &) -> spsc_queue_producer & = delete;
+
     spsc_queue_producer(spsc_queue_producer &&) = delete;
+
     auto operator=(spsc_queue_producer &&) -> spsc_queue_producer & = delete;
+
+private:
+    explicit spsc_queue_producer(storage_type & storage) noexcept
+    : producer_cache_line_(&storage.producer_cache_line())
+    , consumer_cache_line_(&storage.consumer_cache_line())
+    , slots_(&storage.slot(0))
+    , local_write_seq_(producer_cache_line_->seq.load(std::memory_order_relaxed))
+    , cached_read_seq_(consumer_cache_line_->seq.load(std::memory_order_acquire))
+    {}
 
 public:
     // Copy a T value into the queue.
