@@ -12,6 +12,7 @@
 
 #include "pulse/concepts/size.hpp"
 #include "pulse/concepts/type.hpp"
+#include "pulse/config/config.hpp"
 #include "pulse/spsc/spsc_storage.hpp"
 
 namespace pulse::spsc
@@ -20,7 +21,7 @@ namespace pulse::spsc
 // SPSC Queue Producer.
 template <concepts::QueueElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
-class spsc_queue_producer final
+class alignas(config::cache_line_alignment) spsc_queue_producer final
 {
 private:
     friend class spsc_queue<T, Capacity>;

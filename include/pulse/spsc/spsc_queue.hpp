@@ -39,7 +39,7 @@ public:
 
     ~spsc_queue() noexcept = default;
 
-public:
+private:
     // The private key restricts this constructor to validated factory results.
     explicit spsc_queue(
         typename storage_type::construction_key key,
@@ -134,12 +134,14 @@ public:
         return Capacity;
     }
 
+    // Return the required size of the shared region.
     [[nodiscard]]
     static constexpr auto required_bytes() noexcept -> std::size_t
     {
         return spsc_queue_storage<T, Capacity>::required_bytes();
     }
 
+    // Return the required alignment of the shared region.
     [[nodiscard]]
     static constexpr auto required_alignment() noexcept -> std::size_t
     {
