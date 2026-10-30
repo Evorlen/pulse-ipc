@@ -43,7 +43,7 @@ private:
     , producer_cache_line_(&storage.producer_cache_line())
     , slots_(&storage.slot(0))
     , local_read_seq_(consumer_cache_line_->seq.load(std::memory_order_relaxed))
-    , cached_write_seq_(producer_cache_line_->seq.load(std::memory_order_acquire))
+    , cached_read_limit_(producer_cache_line_->seq.load(std::memory_order_acquire))
     {}
 
 public:
@@ -87,10 +87,10 @@ public:
 
 private:
     // Release the local read sequence to the consumer's cache line.
-    auto _release() noexcept -> void
+    auto _release(std::uint64_t next_read_seq) noexcept -> void
     {
-        ++local_read_seq_;
-        consumer_cache_line_->seq.store(local_read_seq_, std::memory_order_release);
+        local_read_seq_ = next_read_seq;
+        consumer_cache_line_->seq.store(next_read_seq, std::memory_order_release);
     }
 
     template <typename Consumer>
@@ -101,15 +101,14 @@ private:
     {
         // The consumer owns its local read sequence; only refresh the peer's sequence when empty.
         const auto read_seq = local_read_seq_;
-        auto & cached_write_seq = cached_write_seq_;
 
         // Check if the queue is empty.
-        if (read_seq == cached_write_seq) {
+        if (read_seq == cached_read_limit_) {
             // Slow path. Read and update the consumer's cached write sequence.
-            cached_write_seq = producer_cache_line_->seq.load(std::memory_order_acquire);
+            cached_read_limit_ = producer_cache_line_->seq.load(std::memory_order_acquire);
 
             // Check if the queue is still empty.
-            if (read_seq == cached_write_seq) {
+            if (read_seq == cached_read_limit_) {
                 return false;
             }
         }
@@ -121,7 +120,7 @@ private:
         std::destroy_at(slot);
 
         // Release the slot only after consumption and destruction succeed.
-        _release();
+        _release(read_seq + 1);
 
         return true;
     }
@@ -131,7 +130,7 @@ private:
     spsc_queue_cache_line * producer_cache_line_;
     slot_type * slots_;
     std::uint64_t local_read_seq_;
-    std::uint64_t cached_write_seq_;
+    std::uint64_t cached_read_limit_;
 };
 
 } // namespace pulse::spsc

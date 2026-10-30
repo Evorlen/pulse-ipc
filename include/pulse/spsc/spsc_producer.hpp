@@ -42,7 +42,7 @@ private:
     , consumer_cache_line_(&storage.consumer_cache_line())
     , slots_(&storage.slot(0))
     , local_write_seq_(producer_cache_line_->seq.load(std::memory_order_relaxed))
-    , cached_read_seq_(consumer_cache_line_->seq.load(std::memory_order_acquire))
+    , cached_write_limit_(consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity)
     {}
 
 public:
@@ -73,10 +73,10 @@ public:
 
 private:
     // Commit the local write sequence to the producer's cache line.
-    auto _commit() noexcept -> void
+    auto _commit(std::uint64_t next_write_seq) noexcept -> void
     {
-        ++local_write_seq_;
-        producer_cache_line_->seq.store(local_write_seq_, std::memory_order_release);
+        local_write_seq_ = next_write_seq;
+        producer_cache_line_->seq.store(next_write_seq, std::memory_order_release);
     }
 
     template <typename... Args>
@@ -85,15 +85,14 @@ private:
     {
         // The producer owns its local write sequence; only refresh the peer's sequence when full.
         const auto write_seq = local_write_seq_;
-        auto & cached_read_seq = cached_read_seq_;
 
         // Check if the queue is full.
-        if (write_seq - cached_read_seq == Capacity) {
+        if (write_seq == cached_write_limit_) {
             // Slow path. Read and update the producer's cached read sequence.
-            cached_read_seq = consumer_cache_line_->seq.load(std::memory_order_acquire);
+            cached_write_limit_ = consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity;
 
             // Check if the queue is still full.
-            if (write_seq - cached_read_seq == Capacity) {
+            if (write_seq == cached_write_limit_) {
                 return false;
             }
         }
@@ -104,7 +103,7 @@ private:
         std::construct_at(slot, std::forward<Args>(args)...);
 
         // Publish the element only after construction succeeds.
-        _commit();
+        _commit(write_seq + 1);
 
         return true;
     }
@@ -114,7 +113,7 @@ private:
     spsc_queue_cache_line * consumer_cache_line_;
     slot_type * slots_;
     std::uint64_t local_write_seq_;
-    std::uint64_t cached_read_seq_;
+    std::uint64_t cached_write_limit_;
 };
 
 } // namespace pulse::spsc
