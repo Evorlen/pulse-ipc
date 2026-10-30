@@ -31,20 +31,20 @@ private:
 
 public:
     spsc_queue_consumer(const spsc_queue_consumer &) = delete;
-    
+
     auto operator=(const spsc_queue_consumer &) -> spsc_queue_consumer & = delete;
-    
+
     spsc_queue_consumer(spsc_queue_consumer &&) = delete;
-    
+
     auto operator=(spsc_queue_consumer &&) -> spsc_queue_consumer & = delete;
 
 private:
     explicit spsc_queue_consumer(storage_type & storage) noexcept
-    : consumer_cache_line_(&storage.consumer_cache_line())
-    , producer_cache_line_(&storage.producer_cache_line())
-    , slots_(&storage.slot(0))
-    , local_read_seq_(consumer_cache_line_->seq.load(std::memory_order_relaxed))
-    , cached_read_limit_(producer_cache_line_->seq.load(std::memory_order_acquire))
+        : consumer_cache_line_(&storage.consumer_cache_line())
+        , producer_cache_line_(&storage.producer_cache_line())
+        , slots_(&storage.slot(0))
+        , local_read_seq_(consumer_cache_line_->seq.load(std::memory_order_relaxed))
+        , cached_read_limit_(producer_cache_line_->seq.load(std::memory_order_acquire))
     {}
 
 public:
@@ -86,14 +86,40 @@ public:
         return _try_consume(std::forward<Consumer>(consume));
     }
 
-private:
-    // Release the local read sequence to the consumer's cache line.
-    auto _release(std::uint64_t next_read_seq) noexcept -> void
+    // Borrow the committed front element, or return nullptr when empty.
+    // Repeated calls return the same element until release(). Do not destroy it yourself.
+    // The pointer expires at release; endpoint operations must not be reentered.
+    [[nodiscard]]
+    auto try_peek() noexcept -> T *
     {
-        local_read_seq_ = next_read_seq;
-        consumer_cache_line_->seq.store(next_read_seq, std::memory_order_release);
+        // The consumer owns its local read sequence; only refresh the peer's sequence when empty.
+        const auto read_seq = local_read_seq_;
+
+        // Check if the queue is empty.
+        if (read_seq == cached_read_limit_) {
+            // Slow path. Read and update the consumer's cached write sequence.
+            cached_read_limit_ = producer_cache_line_->seq.load(std::memory_order_acquire);
+
+            // Check if the queue is still empty.
+            if (read_seq == cached_read_limit_) {
+                return nullptr;
+            }
+        }
+
+        return slots_[read_seq & (Capacity - 1)].element();
     }
 
+    // Destroy the borrowed element before allowing the producer to reuse its slot.
+    // Requires a successful peek. Call exactly once; do not mix ordinary consumption
+    // with an outstanding borrow. Retiring an endpoint leaves peeks queued.
+    auto release() noexcept -> void
+    {
+        std::destroy_at(slots_[local_read_seq_ & (Capacity - 1)].element());
+        ++local_read_seq_;
+        consumer_cache_line_->seq.store(local_read_seq_, std::memory_order_release);
+    }
+
+private:
     template <typename Consumer>
     [[nodiscard]]
     auto _try_consume(Consumer && consume) noexcept(std::is_nothrow_invocable_v<Consumer, T &>)
@@ -114,14 +140,13 @@ private:
             }
         }
 
-        // Fast path.
-        // Consume the element, then destroy it in the slot.
         auto * slot = slots_[read_seq & (Capacity - 1)].element();
         std::invoke(std::forward<Consumer>(consume), *slot);
         std::destroy_at(slot);
 
-        // Release the slot only after consumption and destruction succeed.
-        _release(read_seq + 1);
+        // Release only after consumption and destruction succeed.
+        local_read_seq_ = read_seq + 1;
+        consumer_cache_line_->seq.store(local_read_seq_, std::memory_order_release);
 
         return true;
     }

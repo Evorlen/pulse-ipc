@@ -39,11 +39,11 @@ public:
 
 private:
     explicit spsc_queue_producer(storage_type & storage) noexcept
-    : producer_cache_line_(&storage.producer_cache_line())
-    , consumer_cache_line_(&storage.consumer_cache_line())
-    , slots_(&storage.slot(0))
-    , local_write_seq_(producer_cache_line_->seq.load(std::memory_order_relaxed))
-    , cached_write_limit_(consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity)
+        : producer_cache_line_(&storage.producer_cache_line())
+        , consumer_cache_line_(&storage.consumer_cache_line())
+        , slots_(&storage.slot(0))
+        , local_write_seq_(producer_cache_line_->seq.load(std::memory_order_relaxed))
+        , cached_write_limit_(consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity)
     {}
 
 public:
@@ -72,14 +72,47 @@ public:
         return _try_emplace(std::forward<Args>(args)...);
     }
 
-private:
-    // Commit the local write sequence to the producer's cache line.
-    auto _commit(std::uint64_t next_write_seq) noexcept -> void
+    // Reserve raw storage for one T, or return nullptr when full.
+    // Repeated calls return the same reservation. Construct a T before commit().
+    // The pointer expires at commit/cancel; endpoint operations must not be reentered.
+    [[nodiscard]]
+    auto try_reserve() noexcept -> T *
     {
-        local_write_seq_ = next_write_seq;
-        producer_cache_line_->seq.store(next_write_seq, std::memory_order_release);
+        // The producer owns its local write sequence; only refresh the peer's sequence when full.
+        const auto write_seq = local_write_seq_;
+
+        // Check if the queue is full.
+        if (write_seq == cached_write_limit_) {
+            // Slow path. Read and update the producer's cached read sequence.
+            cached_write_limit_ =
+                consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity;
+
+            // Check if the queue is still full.
+            if (write_seq == cached_write_limit_) {
+                return nullptr;
+            }
+        }
+
+        return slots_[write_seq & (Capacity - 1)].address();
     }
 
+    // Requires a successful reservation containing a live T. Call exactly once.
+    // The caller must not mix ordinary pushes with an outstanding reservation.
+    auto commit() noexcept -> void
+    {
+        ++local_write_seq_;
+        producer_cache_line_->seq.store(local_write_seq_, std::memory_order_release);
+    }
+
+    // No-op: reservations do not change queue state.
+    // Caller must destroy any constructed T first. Raw storage has no known lifetime.
+    // Resolve reservations before retiring the endpoint; its destructor does not clean them up.
+    auto cancel() noexcept -> void
+    {
+        // Do nothing.
+    }
+
+private:
     template <typename... Args>
     auto _try_emplace(Args &&... args) noexcept(std::is_nothrow_constructible_v<T, Args...>) -> bool
         requires std::is_constructible_v<T, Args...>
@@ -90,7 +123,8 @@ private:
         // Check if the queue is full.
         if (write_seq == cached_write_limit_) {
             // Slow path. Read and update the producer's cached read sequence.
-            cached_write_limit_ = consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity;
+            cached_write_limit_ =
+                consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity;
 
             // Check if the queue is still full.
             if (write_seq == cached_write_limit_) {
@@ -98,13 +132,12 @@ private:
             }
         }
 
-        // Fast path.
-        // Construct the element in the aligned slot storage.
         auto * slot = slots_[write_seq & (Capacity - 1)].address();
         std::construct_at(slot, std::forward<Args>(args)...);
 
-        // Publish the element only after construction succeeds.
-        _commit(write_seq + 1);
+        // Publish only after construction succeeds; exceptions leave the sequence unchanged.
+        local_write_seq_ = write_seq + 1;
+        producer_cache_line_->seq.store(local_write_seq_, std::memory_order_release);
 
         return true;
     }

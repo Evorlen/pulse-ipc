@@ -39,7 +39,7 @@ public:
 
     ~spsc_queue() noexcept = default;
 
-private:
+public:
     // The private key restricts this constructor to validated factory results.
     explicit spsc_queue(
         typename storage_type::construction_key key,
