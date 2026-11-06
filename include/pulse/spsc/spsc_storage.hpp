@@ -179,11 +179,13 @@ public:
             return;
         }
 
-        auto read_seq = region_->consumer_cache_line.seq.load(std::memory_order_relaxed);
-        const auto write_seq = region_->producer_cache_line.seq.load(std::memory_order_relaxed);
-        while (read_seq != write_seq) {
-            std::destroy_at(slot(read_seq & (Capacity - 1)).element());
-            ++read_seq;
+        if constexpr (!std::is_trivially_destructible_v<T>) {
+            auto read_seq = region_->consumer_cache_line.seq.load(std::memory_order_relaxed);
+            const auto write_seq = region_->producer_cache_line.seq.load(std::memory_order_relaxed);
+            while (read_seq != write_seq) {
+                std::destroy_at(slot(read_seq & (Capacity - 1)).element());
+                ++read_seq;
+            }
         }
 
         if (owns_memory_) {
