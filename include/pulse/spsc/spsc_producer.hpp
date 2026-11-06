@@ -271,10 +271,15 @@ private:
             try {
                 construct();
             } catch (...) {
-                while (constructed != 0) {
-                    --constructed;
-                    std::destroy_at(slots_[(write_seq + constructed) & (Capacity - 1)].element());
+                if constexpr (!std::is_trivially_destructible_v<T>) {
+                    while (constructed != 0) {
+                        --constructed;
+                        std::destroy_at(
+                            slots_[(write_seq + constructed) & (Capacity - 1)].element()
+                        );
+                    }
                 }
+
                 throw;
             }
         }

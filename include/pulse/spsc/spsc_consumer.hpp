@@ -228,9 +228,13 @@ public:
     {
         assert(count <= peeked_count_);
         const auto read_seq = local_read_seq_;
-        for (std::size_t index = 0; index < count; ++index) {
-            std::destroy_at(slots_[(read_seq + index) & (Capacity - 1)].element());
+
+        if constexpr (!std::is_trivially_destructible_v<T>) {
+            for (std::size_t index = 0; index < count; ++index) {
+                std::destroy_at(slots_[(read_seq + index) & (Capacity - 1)].element());
+            }
         }
+
         peeked_count_ = 0;
         if (count != 0) {
             local_read_seq_ = read_seq + count;
@@ -267,12 +271,15 @@ private:
             }
         }
 
-        // Keep every queued object alive if a copy assignment throws. Outputs belong to the caller
-        // and may already have changed; neither their values nor arbitrary assignment side effects
-        // can be rolled back here. Queue elements are destroyed only after all assignments succeed.
-        for (std::size_t index = 0; index < values.size(); ++index) {
-            std::destroy_at(slots_[(read_seq + index) & (Capacity - 1)].element());
+        if constexpr (!std::is_trivially_destructible_v<T>) {
+            // Keep every queued object alive if a copy assignment throws. Outputs belong to the caller
+            // and may already have changed; neither their values nor arbitrary assignment side effects
+            // can be rolled back here. Queue elements are destroyed only after all assignments succeed.
+            for (std::size_t index = 0; index < values.size(); ++index) {
+                std::destroy_at(slots_[(read_seq + index) & (Capacity - 1)].element());
+            }
         }
+
         local_read_seq_ = read_seq + values.size();
         consumer_cache_line_->seq.store(local_read_seq_, std::memory_order_release);
     }
@@ -300,7 +307,10 @@ private:
 
         auto * slot = slots_[read_seq & (Capacity - 1)].element();
         std::invoke(std::forward<Consumer>(consume), *slot);
-        std::destroy_at(slot);
+
+        if constexpr (!std::is_trivially_destructible_v<T>) {
+            std::destroy_at(slot);
+        }
 
         // Release only after consumption and destruction succeed.
         local_read_seq_ = read_seq + 1;
