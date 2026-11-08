@@ -30,8 +30,6 @@ class alignas(config::cache_line_alignment) spsc_queue_consumer final
 {
 private:
     friend class spsc_queue<T, Capacity>;
-    using storage_type = spsc_queue_storage<T, Capacity>;
-    using slot_type = spsc_queue_slot<T>;
 
 public:
     spsc_queue_consumer(const spsc_queue_consumer &) = delete;
@@ -43,7 +41,7 @@ public:
     auto operator=(spsc_queue_consumer &&) -> spsc_queue_consumer & = delete;
 
 private:
-    explicit spsc_queue_consumer(storage_type & storage) noexcept
+    explicit spsc_queue_consumer(spsc_queue_storage<T, Capacity> & storage) noexcept
         : consumer_cache_line_(&storage.consumer_cache_line())
         , producer_cache_line_(&storage.producer_cache_line())
         , slots_(&storage.slot(0))
@@ -65,6 +63,7 @@ public:
     }
 
     // Move a T value out of the queue.
+    // If assignment throws, the element stays queued; both it and the output may have changed.
     [[nodiscard]]
     auto try_pop_move(T & value) noexcept(std::is_nothrow_move_assignable_v<T>) -> bool
         requires std::is_move_assignable_v<T>
@@ -85,12 +84,16 @@ public:
     auto try_pop_bulk(std::span<T> values) noexcept(std::is_nothrow_copy_assignable_v<T>) -> bool
         requires std::is_copy_assignable_v<T>
     {
-        assert(peeked_count_ == 0);
+        assert(borrowed_count_ == 0);
+
         const auto count = values.size();
-        if (count == 0) {
+        if (count == 0) [[unlikely]] {
             return true;
         }
-        if (count > Capacity || _read_available(count) < count) {
+        if (count > Capacity) [[unlikely]] {
+            return false;
+        }
+        if (_read_available(count) < count) {
             return false;
         }
 
@@ -99,17 +102,25 @@ public:
     }
 
     // Move-assign the entire output, or return false without moving anything when data is insufficient.
-    // An empty output succeeds. Only non-throwing assignment from T&& is supported.
+    // An empty output succeeds. Destroy and release this batch only after all assignments succeed.
+    // If assignment throws, propagate it without destroying elements or advancing the read sequence.
+    // All elements remain queued, but attempted source and output elements, including the throwing
+    // pair, may have changed and are not restored. Retrying does not recover the original values.
     [[nodiscard]]
-    auto try_pop_bulk_move(std::span<T> values) noexcept -> bool
-        requires std::is_nothrow_move_assignable_v<T>
+    auto try_pop_bulk_move(std::span<T> values) noexcept(std::is_nothrow_move_assignable_v<T>)
+        -> bool
+        requires std::is_move_assignable_v<T>
     {
-        assert(peeked_count_ == 0);
+        assert(borrowed_count_ == 0);
+
         const auto count = values.size();
-        if (count == 0) {
+        if (count == 0) [[unlikely]] {
             return true;
         }
-        if (count > Capacity || _read_available(count) < count) {
+        if (count > Capacity) [[unlikely]] {
+            return false;
+        }
+        if (_read_available(count) < count) {
             return false;
         }
 
@@ -125,8 +136,9 @@ public:
         -> std::size_t
         requires std::is_copy_assignable_v<T>
     {
-        assert(peeked_count_ == 0);
-        if (values.empty()) {
+        assert(borrowed_count_ == 0);
+
+        if (values.empty()) [[unlikely]] {
             return 0;
         }
 
@@ -139,12 +151,16 @@ public:
 
     // Move-assign the available prefix and return its size; leave the output suffix alone.
     // Empty output or an empty queue returns zero without moving anything. Release once on success.
+    // If assignment throws, the whole prefix remains queued and the exception propagates.
+    // Attempted source and output elements may have changed and are not restored, as in bulk move.
     [[nodiscard]]
-    auto try_pop_burst_move(std::span<T> values) noexcept -> std::size_t
-        requires std::is_nothrow_move_assignable_v<T>
+    auto try_pop_burst_move(std::span<T> values) noexcept(std::is_nothrow_move_assignable_v<T>)
+        -> std::size_t
+        requires std::is_move_assignable_v<T>
     {
-        assert(peeked_count_ == 0);
-        if (values.empty()) {
+        assert(borrowed_count_ == 0);
+
+        if (values.empty()) [[unlikely]] {
             return 0;
         }
 
@@ -173,7 +189,7 @@ public:
     // Repeated calls return the same element until release(). Do not destroy it yourself.
     // The pointer expires at release; endpoint operations must not be reentered.
     [[nodiscard]]
-    auto try_peek() noexcept -> T *
+    auto try_borrow() noexcept -> T *
     {
         // The consumer owns its local read sequence; only refresh the peer's sequence when empty.
         const auto read_seq = local_read_seq_;
@@ -189,7 +205,7 @@ public:
             }
         }
 
-        peeked_count_ = std::max(peeked_count_, std::size_t {1});
+        borrowed_count_ = std::max(borrowed_count_, std::size_t {1});
         return slots_[read_seq & (Capacity - 1)].element();
     }
 
@@ -197,17 +213,18 @@ public:
     // Repeated acquisitions share the same front and stay valid until release, including release(0).
     // Do not destroy borrowed elements yourself. A zero request returns an empty view.
     [[nodiscard]]
-    auto try_peek(std::size_t max_count) noexcept -> spsc_queue_read_view<T>
+    auto try_borrow_up_to(std::size_t max_count) noexcept -> spsc_queue_read_view<T>
     {
-        if (max_count == 0) {
+        if (max_count == 0) [[unlikely]] {
             return {};
         }
+
         const auto count = std::min(max_count, _read_available(max_count));
         if (count == 0) {
             return {};
         }
 
-        peeked_count_ = std::max(peeked_count_, count);
+        borrowed_count_ = std::max(borrowed_count_, count);
         const auto index = static_cast<std::size_t>(local_read_seq_ & (Capacity - 1));
         const auto first_count = std::min(count, Capacity - index);
         return spsc_queue_read_view<T> {slots_ + index, first_count, slots_, count - first_count};
@@ -226,16 +243,13 @@ public:
     // release(0) only ends the borrow, preserving all elements and publishing no read sequence.
     auto release(std::size_t count) noexcept -> void
     {
-        assert(count <= peeked_count_);
+        assert(count <= borrowed_count_);
+
         const auto read_seq = local_read_seq_;
 
-        if constexpr (!std::is_trivially_destructible_v<T>) {
-            for (std::size_t index = 0; index < count; ++index) {
-                std::destroy_at(slots_[(read_seq + index) & (Capacity - 1)].element());
-            }
-        }
+        _destroy_batch(read_seq, count);
 
-        peeked_count_ = 0;
+        borrowed_count_ = 0;
         if (count != 0) {
             local_read_seq_ = read_seq + count;
             consumer_cache_line_->seq.store(local_read_seq_, std::memory_order_release);
@@ -243,6 +257,47 @@ public:
     }
 
 private:
+    // Shared path for try_pop, try_pop_move, and try_consume. Invoke the consumer on the front
+    // element, then destroy it and release the slot. Return false when empty without invoking.
+    // Requires no outstanding borrow. If the consumer throws, the element stays queued and may
+    // have been modified; the read sequence stays unchanged.
+    template <typename Consumer>
+    [[nodiscard]]
+    auto _try_consume(Consumer && consume) noexcept(std::is_nothrow_invocable_v<Consumer, T &>)
+        -> bool
+        requires std::is_invocable_v<Consumer, T &>
+    {
+        assert(borrowed_count_ == 0);
+
+        // The consumer owns its local read sequence; only refresh the peer's sequence when empty.
+        const auto read_seq = local_read_seq_;
+
+        // Check if the queue is empty.
+        if (read_seq == cached_read_limit_) {
+            // Slow path. Read and update the consumer's cached write sequence.
+            cached_read_limit_ = producer_cache_line_->seq.load(std::memory_order_acquire);
+
+            // Check if the queue is still empty.
+            if (read_seq == cached_read_limit_) {
+                return false;
+            }
+        }
+
+        // Invoke the consumer on the element corresponding to the read sequence.
+        auto * slot = slots_[read_seq & (Capacity - 1)].element();
+        std::invoke(std::forward<Consumer>(consume), *slot);
+
+        if constexpr (!std::is_trivially_destructible_v<T>) {
+            std::destroy_at(slot);
+        }
+
+        // Release only after consumption and destruction succeed.
+        local_read_seq_ = read_seq + 1;
+        consumer_cache_line_->seq.store(local_read_seq_, std::memory_order_release);
+
+        return true;
+    }
+
     // Cached data is conservative. Refresh when the requested batch does not fit in the cache,
     // even when some cached elements remain. Unsigned subtraction handles sequence wrap.
     [[nodiscard]]
@@ -258,74 +313,62 @@ private:
 
     // The caller has checked that this nonempty batch is available.
     template <bool Move>
-    auto _pop_batch(std::span<T> values) noexcept(Move || std::is_nothrow_copy_assignable_v<T>)
-        -> void
+    auto _pop_batch(
+        std::span<T> values
+    ) noexcept(std::is_nothrow_assignable_v<T &, std::conditional_t<Move, T &&, const T &>>) -> void
     {
         const auto read_seq = local_read_seq_;
-        for (std::size_t index = 0; index < values.size(); ++index) {
-            auto * slot = slots_[(read_seq + index) & (Capacity - 1)].element();
-            if constexpr (Move) {
-                values[index] = std::move(*slot);
-            } else {
-                values[index] = std::as_const(*slot);
+        const auto index = static_cast<std::size_t>(read_seq & (Capacity - 1));
+        const auto first_count = std::min(values.size(), Capacity - index);
+        const auto assign_segment =
+            [](spsc_queue_slot<T> * slots, std::span<T> output) noexcept(
+                std::is_nothrow_assignable_v<T &, std::conditional_t<Move, T &&, const T &>>
+            ) -> void {
+            for (std::size_t offset = 0; offset < output.size(); ++offset) {
+                if constexpr (Move) {
+                    output[offset] = std::move(*slots[offset].element());
+                } else {
+                    output[offset] = std::as_const(*slots[offset].element());
+                }
             }
-        }
+        };
 
-        if constexpr (!std::is_trivially_destructible_v<T>) {
-            // Keep every queued object alive if a copy assignment throws. Outputs belong to the caller
-            // and may already have changed; neither their values nor arbitrary assignment side effects
-            // can be rolled back here. Queue elements are destroyed only after all assignments succeed.
-            for (std::size_t index = 0; index < values.size(); ++index) {
-                std::destroy_at(slots_[(read_seq + index) & (Capacity - 1)].element());
-            }
-        }
+        // Split at the ring boundary once; both segments still belong to a single batch.
+        assign_segment(slots_ + index, values.first(first_count));
+        assign_segment(slots_, values.subspan(first_count));
+
+        // Keep every queued object alive if assignment throws. Outputs and moved-from queue
+        // elements may already have changed; values and assignment side effects are not restored.
+        // Destroy and release queue elements only after all assignments succeed.
+        _destroy_batch(read_seq, values.size());
 
         local_read_seq_ = read_seq + values.size();
         consumer_cache_line_->seq.store(local_read_seq_, std::memory_order_release);
     }
 
-    template <typename Consumer>
-    [[nodiscard]]
-    auto _try_consume(Consumer && consume) noexcept(std::is_nothrow_invocable_v<Consumer, T &>)
-        -> bool
-        requires std::is_invocable_v<Consumer, T &>
+    // Destroy a prefix in FIFO order without computing a wrapped index for each element.
+    auto _destroy_batch(std::uint64_t read_seq, std::size_t count) noexcept -> void
     {
-        assert(peeked_count_ == 0);
-        // The consumer owns its local read sequence; only refresh the peer's sequence when empty.
-        const auto read_seq = local_read_seq_;
-
-        // Check if the queue is empty.
-        if (read_seq == cached_read_limit_) {
-            // Slow path. Read and update the consumer's cached write sequence.
-            cached_read_limit_ = producer_cache_line_->seq.load(std::memory_order_acquire);
-
-            // Check if the queue is still empty.
-            if (read_seq == cached_read_limit_) {
-                return false;
+        if constexpr (!std::is_trivially_destructible_v<T>) {
+            const auto index = static_cast<std::size_t>(read_seq & (Capacity - 1));
+            const auto first_count = std::min(count, Capacity - index);
+            auto * first_slots = slots_ + index;
+            for (std::size_t offset = 0; offset < first_count; ++offset) {
+                std::destroy_at(first_slots[offset].element());
+            }
+            for (std::size_t offset = 0; offset < count - first_count; ++offset) {
+                std::destroy_at(slots_[offset].element());
             }
         }
-
-        auto * slot = slots_[read_seq & (Capacity - 1)].element();
-        std::invoke(std::forward<Consumer>(consume), *slot);
-
-        if constexpr (!std::is_trivially_destructible_v<T>) {
-            std::destroy_at(slot);
-        }
-
-        // Release only after consumption and destruction succeed.
-        local_read_seq_ = read_seq + 1;
-        consumer_cache_line_->seq.store(local_read_seq_, std::memory_order_release);
-
-        return true;
     }
 
 private:
     spsc_queue_cache_line * consumer_cache_line_;
     spsc_queue_cache_line * producer_cache_line_;
-    slot_type * slots_;
+    spsc_queue_slot<T> * slots_;
     std::uint64_t local_read_seq_;
     std::uint64_t cached_read_limit_;
-    std::size_t peeked_count_ {0};
+    std::size_t borrowed_count_ {0};
 };
 
 } // namespace pulse::spsc

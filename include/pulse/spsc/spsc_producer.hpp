@@ -29,8 +29,6 @@ class alignas(config::cache_line_alignment) spsc_queue_producer final
 {
 private:
     friend class spsc_queue<T, Capacity>;
-    using storage_type = spsc_queue_storage<T, Capacity>;
-    using slot_type = spsc_queue_slot<T>;
 
 public:
     spsc_queue_producer(const spsc_queue_producer &) = delete;
@@ -42,7 +40,7 @@ public:
     auto operator=(spsc_queue_producer &&) -> spsc_queue_producer & = delete;
 
 private:
-    explicit spsc_queue_producer(storage_type & storage) noexcept
+    explicit spsc_queue_producer(spsc_queue_storage<T, Capacity> & storage) noexcept
         : producer_cache_line_(&storage.producer_cache_line())
         , consumer_cache_line_(&storage.consumer_cache_line())
         , slots_(&storage.slot(0))
@@ -87,35 +85,48 @@ public:
         requires std::is_copy_constructible_v<T>
     {
         assert(reserved_count_ == 0);
+
         const auto count = values.size();
-        if (count == 0) {
+        if (count == 0) [[unlikely]] {
             return true;
         }
-        if (count > Capacity || _write_available(count) < count) {
+        if (count > Capacity) [[unlikely]] {
+            return false;
+        }
+        if (_write_available(count) < count) {
             return false;
         }
 
         _push_batch<false>(values);
+
         return true;
     }
 
     // Move the entire input, or return false without moving anything when space is insufficient.
-    // An empty input succeeds. Only non-throwing construction from T&& is supported.
+    // An empty input succeeds. If moving throws, destroy this batch's constructed elements
+    // and rethrow without publishing anything. Already attempted source elements, including
+    // the one whose construction threw, may have changed and are not restored.
     // Source objects remain alive in their moved-from states; their container's size does not change.
     [[nodiscard]]
-    auto try_push_bulk_move(std::span<T> values) noexcept -> bool
-        requires std::is_nothrow_move_constructible_v<T>
+    auto try_push_bulk_move(std::span<T> values) noexcept(std::is_nothrow_move_constructible_v<T>)
+        -> bool
+        requires std::is_move_constructible_v<T>
     {
         assert(reserved_count_ == 0);
+
         const auto count = values.size();
-        if (count == 0) {
+        if (count == 0) [[unlikely]] {
             return true;
         }
-        if (count > Capacity || _write_available(count) < count) {
+        if (count > Capacity) [[unlikely]] {
+            return false;
+        }
+        if (_write_available(count) < count) {
             return false;
         }
 
         _push_batch<true>(values);
+
         return true;
     }
 
@@ -127,7 +138,8 @@ public:
         requires std::is_copy_constructible_v<T>
     {
         assert(reserved_count_ == 0);
-        if (values.empty()) {
+
+        if (values.empty()) [[unlikely]] {
             return 0;
         }
 
@@ -140,12 +152,16 @@ public:
 
     // Move only the available prefix and return its size; leave the remaining source elements alone.
     // Publish the prefix once. An empty input or full queue returns zero without moving anything.
+    // If moving throws, destroy the constructed prefix and rethrow without publishing anything.
+    // Already attempted source elements may have changed and are not restored, as in bulk move.
     [[nodiscard]]
-    auto try_push_burst_move(std::span<T> values) noexcept -> std::size_t
-        requires std::is_nothrow_move_constructible_v<T>
+    auto try_push_burst_move(std::span<T> values) noexcept(std::is_nothrow_move_constructible_v<T>)
+        -> std::size_t
+        requires std::is_move_constructible_v<T>
     {
         assert(reserved_count_ == 0);
-        if (values.empty()) {
+
+        if (values.empty()) [[unlikely]] {
             return 0;
         }
 
@@ -178,6 +194,7 @@ public:
         }
 
         reserved_count_ = std::max(reserved_count_, std::size_t {1});
+
         return slots_[write_seq & (Capacity - 1)].address();
     }
 
@@ -185,11 +202,12 @@ public:
     // Repeated acquisitions share the same start; their views remain valid until commit/cancel.
     // Construct each committed element exactly once. A zero request returns an empty view.
     [[nodiscard]]
-    auto try_reserve(std::size_t max_count) noexcept -> spsc_queue_write_view<T>
+    auto try_reserve_up_to(std::size_t max_count) noexcept -> spsc_queue_write_view<T>
     {
-        if (max_count == 0) {
+        if (max_count == 0) [[unlikely]] {
             return {};
         }
+
         const auto count = std::min(max_count, _write_available(max_count));
         if (count == 0) {
             return {};
@@ -215,7 +233,9 @@ public:
     auto commit(std::size_t count) noexcept -> void
     {
         assert(count <= reserved_count_);
+
         reserved_count_ = 0;
+
         if (count != 0) {
             local_write_seq_ += count;
             producer_cache_line_->seq.store(local_write_seq_, std::memory_order_release);
@@ -231,69 +251,15 @@ public:
     }
 
 private:
-    // Cached space is conservative. Refresh whenever it cannot satisfy the requested batch,
-    // even if it still has room for a single element. Unsigned subtraction handles sequence wrap.
-    [[nodiscard]]
-    auto _write_available(std::size_t requested) noexcept -> std::size_t
-    {
-        auto available = static_cast<std::size_t>(cached_write_limit_ - local_write_seq_);
-        if (available < std::min(requested, Capacity)) {
-            cached_write_limit_ =
-                consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity;
-            available = static_cast<std::size_t>(cached_write_limit_ - local_write_seq_);
-        }
-        return available;
-    }
-
-    // The caller has checked that this nonempty batch fits in the available slots.
-    template <bool Move>
-    auto _push_batch(
-        std::span<std::conditional_t<Move, T, const T>> values
-    ) noexcept(Move || std::is_nothrow_copy_constructible_v<T>) -> void
-    {
-        const auto write_seq = local_write_seq_;
-        std::size_t constructed = 0;
-        const auto construct =
-            [&]() noexcept(Move || std::is_nothrow_copy_constructible_v<T>) -> auto {
-            for (; constructed < values.size(); ++constructed) {
-                auto * slot = slots_[(write_seq + constructed) & (Capacity - 1)].address();
-                if constexpr (Move) {
-                    std::construct_at(slot, std::move(values[constructed]));
-                } else {
-                    std::construct_at(slot, values[constructed]);
-                }
-            }
-        };
-
-        if constexpr (Move || std::is_nothrow_copy_constructible_v<T>) {
-            construct();
-        } else {
-            try {
-                construct();
-            } catch (...) {
-                if constexpr (!std::is_trivially_destructible_v<T>) {
-                    while (constructed != 0) {
-                        --constructed;
-                        std::destroy_at(
-                            slots_[(write_seq + constructed) & (Capacity - 1)].element()
-                        );
-                    }
-                }
-
-                throw;
-            }
-        }
-
-        // Neither the local nor the shared write sequence advances until construction succeeds.
-        local_write_seq_ = write_seq + values.size();
-        producer_cache_line_->seq.store(local_write_seq_, std::memory_order_release);
-    }
-
+    // Shared path for try_push and try_emplace. Construct one T from the forwarded arguments,
+    // or return false when full without constructing anything. Requires no outstanding reservation.
+    // If construction throws, the write sequence stays unchanged.
     template <typename... Args>
     auto _try_emplace(Args &&... args) noexcept(std::is_nothrow_constructible_v<T, Args...>) -> bool
         requires std::is_constructible_v<T, Args...>
     {
         assert(reserved_count_ == 0);
+
         // The producer owns its local write sequence; only refresh the peer's sequence when full.
         const auto write_seq = local_write_seq_;
 
@@ -309,6 +275,7 @@ private:
             }
         }
 
+        // Construct T in the slot corresponding to the write sequence.
         auto * slot = slots_[write_seq & (Capacity - 1)].address();
         std::construct_at(slot, std::forward<Args>(args)...);
 
@@ -319,10 +286,88 @@ private:
         return true;
     }
 
+    // Cached space is conservative. Refresh whenever it cannot satisfy the requested batch,
+    // even if it still has room for a single element. Unsigned subtraction handles sequence wrap.
+    [[nodiscard]]
+    auto _write_available(std::size_t requested) noexcept -> std::size_t
+    {
+        auto available = static_cast<std::size_t>(cached_write_limit_ - local_write_seq_);
+        // If the cached space is not enough, refresh the cached write limit, though it might still be not enough.
+        if (available < std::min(requested, Capacity)) {
+            cached_write_limit_ =
+                consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity;
+            available = static_cast<std::size_t>(cached_write_limit_ - local_write_seq_);
+        }
+        return available;
+    }
+
+    // The caller has checked that this nonempty batch fits in the available slots.
+    template <bool Move>
+    auto _push_batch(
+        std::span<std::conditional_t<Move, T, const T>> values
+    ) noexcept(std::is_nothrow_constructible_v<T, std::conditional_t<Move, T &&, const T &>>)
+        -> void
+    {
+        constexpr bool is_nothrow_constructible =
+            std::is_nothrow_constructible_v<T, std::conditional_t<Move, T &&, const T &>>;
+
+        const auto write_seq = local_write_seq_;
+        const auto index = static_cast<std::size_t>(write_seq & (Capacity - 1));
+        const auto first_count = std::min(values.size(), Capacity - index);
+        auto * first_slots = slots_ + index;
+        std::size_t constructed = 0;
+        const auto construct_one = [](
+                                       T * slot,
+                                       std::conditional_t<Move, T, const T> & value
+                                   ) noexcept(is_nothrow_constructible) -> void {
+            if constexpr (Move) {
+                std::construct_at(slot, std::move(value));
+            } else {
+                std::construct_at(slot, value);
+            }
+        };
+        const auto construct = [&]() noexcept(is_nothrow_constructible) -> void {
+            // Split at the ring boundary once, keeping each loop's slot access contiguous.
+            for (; constructed < first_count; ++constructed) {
+                construct_one(first_slots[constructed].address(), values[constructed]);
+            }
+            for (; constructed < values.size(); ++constructed) {
+                construct_one(slots_[constructed - first_count].address(), values[constructed]);
+            }
+        };
+
+        if constexpr (is_nothrow_constructible) {
+            construct();
+        } else {
+            // If construction throws, destroy the already constructed elements and rethrow.
+            try {
+                construct();
+            } catch (...) {
+                if constexpr (!std::is_trivially_destructible_v<T>) {
+                    // Roll back the second segment before the first, in reverse construction order.
+                    while (constructed > first_count) {
+                        --constructed;
+                        std::destroy_at(slots_[constructed - first_count].element());
+                    }
+                    while (constructed != 0) {
+                        --constructed;
+                        std::destroy_at(first_slots[constructed].element());
+                    }
+                }
+
+                throw;
+            }
+        }
+
+        // Neither the local nor the shared write sequence advances until construction succeeds.
+        local_write_seq_ = write_seq + values.size();
+        producer_cache_line_->seq.store(local_write_seq_, std::memory_order_release);
+    }
+
 private:
     spsc_queue_cache_line * producer_cache_line_;
     spsc_queue_cache_line * consumer_cache_line_;
-    slot_type * slots_;
+    spsc_queue_slot<T> * slots_;
     std::uint64_t local_write_seq_;
     std::uint64_t cached_write_limit_;
     std::size_t reserved_count_ {0};
