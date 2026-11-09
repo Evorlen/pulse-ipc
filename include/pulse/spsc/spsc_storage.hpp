@@ -24,8 +24,14 @@
 namespace pulse::spsc
 {
 
-static_assert(std::atomic<std::uint32_t>::is_always_lock_free, "std::atomic<std::uint32_t> must be always lock-free.");
-static_assert(std::atomic<std::uint64_t>::is_always_lock_free, "std::atomic<std::uint64_t> must be always lock-free.");
+static_assert(
+    std::atomic<std::uint32_t>::is_always_lock_free,
+    "std::atomic<std::uint32_t> must be always lock-free."
+);
+static_assert(
+    std::atomic<std::uint64_t>::is_always_lock_free,
+    "std::atomic<std::uint64_t> must be always lock-free."
+);
 
 // Header for the shared queue.
 // With 64-byte cache lines, the header occupies two cache lines.
@@ -131,6 +137,8 @@ private:
     static constexpr std::size_t slots_alignment = alignof(T) > config::cache_line_alignment
                                                        ? alignof(T)
                                                        : config::cache_line_alignment;
+    static constexpr std::size_t physical_capacity = std::bit_ceil(Capacity);
+    static constexpr std::size_t index_mask = physical_capacity - 1;
 
     // The entire shared region. It contains no process-local pointers or caches.
     struct region final
@@ -138,7 +146,7 @@ private:
         spsc_queue_header header;
         spsc_queue_cache_line producer_cache_line;
         spsc_queue_cache_line consumer_cache_line;
-        alignas(slots_alignment) std::array<spsc_queue_slot<T>, Capacity> slots;
+        alignas(slots_alignment) std::array<spsc_queue_slot<T>, physical_capacity> slots;
     };
 
     static_assert(std::is_standard_layout_v<region>);
@@ -183,7 +191,7 @@ public:
             auto read_seq = region_->consumer_cache_line.seq.load(std::memory_order_relaxed);
             const auto write_seq = region_->producer_cache_line.seq.load(std::memory_order_relaxed);
             while (read_seq != write_seq) {
-                std::destroy_at(slot(read_seq & (Capacity - 1)).element());
+                std::destroy_at(slot(read_seq & index_mask).element());
                 ++read_seq;
             }
         }

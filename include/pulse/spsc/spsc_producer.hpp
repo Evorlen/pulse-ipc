@@ -30,6 +30,9 @@ class alignas(config::cache_line_alignment) spsc_queue_producer final
 private:
     friend class spsc_queue<T, Capacity>;
 
+    static constexpr std::size_t physical_capacity = std::bit_ceil(Capacity);
+    static constexpr std::size_t index_mask = physical_capacity - 1;
+
 public:
     spsc_queue_producer(const spsc_queue_producer &) = delete;
 
@@ -195,7 +198,7 @@ public:
 
         reserved_count_ = std::max(reserved_count_, std::size_t {1});
 
-        return slots_[write_seq & (Capacity - 1)].address();
+        return slots_[write_seq & index_mask].address();
     }
 
     // Reserve up to max_count slots without constructing or publishing any T objects.
@@ -214,8 +217,8 @@ public:
         }
 
         reserved_count_ = std::max(reserved_count_, count);
-        const auto index = static_cast<std::size_t>(local_write_seq_ & (Capacity - 1));
-        const auto first_count = std::min(count, Capacity - index);
+        const auto index = static_cast<std::size_t>(local_write_seq_ & index_mask);
+        const auto first_count = std::min(count, physical_capacity - index);
         return spsc_queue_write_view<T> {slots_ + index, first_count, slots_, count - first_count};
     }
 
@@ -276,7 +279,7 @@ private:
         }
 
         // Construct T in the slot corresponding to the write sequence.
-        auto * slot = slots_[write_seq & (Capacity - 1)].address();
+        auto * slot = slots_[write_seq & index_mask].address();
         std::construct_at(slot, std::forward<Args>(args)...);
 
         // Publish only after construction succeeds; exceptions leave the sequence unchanged.
@@ -303,17 +306,16 @@ private:
 
     // The caller has checked that this nonempty batch fits in the available slots.
     template <bool Move>
-    auto _push_batch(
-        std::span<std::conditional_t<Move, T, const T>> values
-    ) noexcept(std::is_nothrow_constructible_v<T, std::conditional_t<Move, T &&, const T &>>)
-        -> void
+    auto _push_batch(std::span<std::conditional_t<Move, T, const T>> values) noexcept(
+        std::is_nothrow_constructible_v<T, std::conditional_t<Move, T &&, const T &>>
+    ) -> void
     {
         constexpr bool is_nothrow_constructible =
             std::is_nothrow_constructible_v<T, std::conditional_t<Move, T &&, const T &>>;
 
         const auto write_seq = local_write_seq_;
-        const auto index = static_cast<std::size_t>(write_seq & (Capacity - 1));
-        const auto first_count = std::min(values.size(), Capacity - index);
+        const auto index = static_cast<std::size_t>(write_seq & index_mask);
+        const auto first_count = std::min(values.size(), physical_capacity - index);
         auto * first_slots = slots_ + index;
         std::size_t constructed = 0;
         const auto construct_one = [](

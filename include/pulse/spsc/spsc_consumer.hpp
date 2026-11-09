@@ -31,6 +31,9 @@ class alignas(config::cache_line_alignment) spsc_queue_consumer final
 private:
     friend class spsc_queue<T, Capacity>;
 
+    static constexpr std::size_t physical_capacity = std::bit_ceil(Capacity);
+    static constexpr std::size_t index_mask = physical_capacity - 1;
+
 public:
     spsc_queue_consumer(const spsc_queue_consumer &) = delete;
 
@@ -206,7 +209,7 @@ public:
         }
 
         borrowed_count_ = std::max(borrowed_count_, std::size_t {1});
-        return slots_[read_seq & (Capacity - 1)].element();
+        return slots_[read_seq & index_mask].element();
     }
 
     // Borrow up to max_count committed elements, split into two segments when the ring wraps.
@@ -225,8 +228,8 @@ public:
         }
 
         borrowed_count_ = std::max(borrowed_count_, count);
-        const auto index = static_cast<std::size_t>(local_read_seq_ & (Capacity - 1));
-        const auto first_count = std::min(count, Capacity - index);
+        const auto index = static_cast<std::size_t>(local_read_seq_ & index_mask);
+        const auto first_count = std::min(count, physical_capacity - index);
         return spsc_queue_read_view<T> {slots_ + index, first_count, slots_, count - first_count};
     }
 
@@ -284,7 +287,7 @@ private:
         }
 
         // Invoke the consumer on the element corresponding to the read sequence.
-        auto * slot = slots_[read_seq & (Capacity - 1)].element();
+        auto * slot = slots_[read_seq & index_mask].element();
         std::invoke(std::forward<Consumer>(consume), *slot);
 
         if constexpr (!std::is_trivially_destructible_v<T>) {
@@ -318,8 +321,8 @@ private:
     ) noexcept(std::is_nothrow_assignable_v<T &, std::conditional_t<Move, T &&, const T &>>) -> void
     {
         const auto read_seq = local_read_seq_;
-        const auto index = static_cast<std::size_t>(read_seq & (Capacity - 1));
-        const auto first_count = std::min(values.size(), Capacity - index);
+        const auto index = static_cast<std::size_t>(read_seq & index_mask);
+        const auto first_count = std::min(values.size(), physical_capacity - index);
         const auto assign_segment =
             [](spsc_queue_slot<T> * slots, std::span<T> output) noexcept(
                 std::is_nothrow_assignable_v<T &, std::conditional_t<Move, T &&, const T &>>
@@ -350,8 +353,8 @@ private:
     auto _destroy_batch(std::uint64_t read_seq, std::size_t count) noexcept -> void
     {
         if constexpr (!std::is_trivially_destructible_v<T>) {
-            const auto index = static_cast<std::size_t>(read_seq & (Capacity - 1));
-            const auto first_count = std::min(count, Capacity - index);
+            const auto index = static_cast<std::size_t>(read_seq & index_mask);
+            const auto first_count = std::min(count, physical_capacity - index);
             auto * first_slots = slots_ + index;
             for (std::size_t offset = 0; offset < first_count; ++offset) {
                 std::destroy_at(first_slots[offset].element());
