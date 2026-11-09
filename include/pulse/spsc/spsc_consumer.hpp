@@ -203,7 +203,7 @@ public:
         }
 
         borrowed_count_ = std::max(borrowed_count_, std::size_t {1});
-        return slots_[read_seq & index_mask].element();
+        return std::addressof(slots_[read_seq & index_mask].element());
     }
 
     // Borrow up to max_count committed elements, split into two segments when the ring wraps.
@@ -280,12 +280,10 @@ private:
         }
 
         // Invoke the consumer on the element corresponding to the read sequence.
-        auto * slot = slots_[read_seq & index_mask].element();
-        std::invoke(std::forward<Consumer>(consume), *slot);
+        auto & slot = slots_[read_seq & index_mask];
+        std::invoke(std::forward<Consumer>(consume), slot.element());
 
-        if constexpr (!std::is_trivially_destructible_v<T>) {
-            std::destroy_at(slot);
-        }
+        slot.destroy();
 
         // Release only after consumption and destruction succeed.
         local_read_seq_ = read_seq + 1;
@@ -322,9 +320,9 @@ private:
             ) -> void {
             for (std::size_t offset = 0; offset < output.size(); ++offset) {
                 if constexpr (Move) {
-                    output[offset] = std::move(*slots[offset].element());
+                    output[offset] = std::move(slots[offset].element());
                 } else {
-                    output[offset] = std::as_const(*slots[offset].element());
+                    output[offset] = std::as_const(slots[offset].element());
                 }
             }
         };
@@ -345,16 +343,14 @@ private:
     // Destroy a prefix in FIFO order without computing a wrapped index for each element.
     auto _destroy_batch(std::uint64_t read_seq, std::size_t count) noexcept -> void
     {
-        if constexpr (!std::is_trivially_destructible_v<T>) {
-            const auto index = static_cast<std::size_t>(read_seq & index_mask);
-            const auto first_count = std::min(count, physical_capacity - index);
-            auto * first_slots = slots_ + index;
-            for (std::size_t offset = 0; offset < first_count; ++offset) {
-                std::destroy_at(first_slots[offset].element());
-            }
-            for (std::size_t offset = 0; offset < count - first_count; ++offset) {
-                std::destroy_at(slots_[offset].element());
-            }
+        const auto index = static_cast<std::size_t>(read_seq & index_mask);
+        const auto first_count = std::min(count, physical_capacity - index);
+        auto * first_slots = slots_ + index;
+        for (std::size_t offset = 0; offset < first_count; ++offset) {
+            first_slots[offset].destroy();
+        }
+        for (std::size_t offset = 0; offset < count - first_count; ++offset) {
+            slots_[offset].destroy();
         }
     }
 

@@ -67,7 +67,7 @@ public:
         {
             assert(index < size_);
             if constexpr (Constructed) {
-                return *slots_[index].element();
+                return slots_[index].element();
             } else {
                 return slots_[index].address();
             }

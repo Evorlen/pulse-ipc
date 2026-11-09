@@ -82,25 +82,66 @@ enum class spsc_queue_state : std::uint32_t
 
 // Slot for the queue.
 template <concepts::QueueElementType T>
-struct alignas(T) spsc_queue_slot final
+class alignas(T) spsc_queue_slot final
 {
+private:
+    // Inactive storage for one T. The slot starts and ends that lifetime with construct() and
+    // destroy(); this union does neither. The member is the T itself, so a pointer or reference
+    // to it designates the live object and does not need std::launder. A byte buffer would only
+    // provide storage: after placement new, reinterpret_cast would not point at the new T.
+    union storage_type final
+    {
+    public:
+        storage_type() noexcept {}
+
+        ~storage_type() noexcept {}
+
+    public:
+        T value;
+    };
+
+public:
+    spsc_queue_slot() noexcept = default;
+
+    spsc_queue_slot(const spsc_queue_slot &) noexcept = delete;
+
+    spsc_queue_slot(spsc_queue_slot &&) noexcept = delete;
+
+    auto operator=(const spsc_queue_slot &) noexcept -> spsc_queue_slot & = delete;
+
+    auto operator=(spsc_queue_slot &&) noexcept -> spsc_queue_slot & = delete;
+
 public:
     // Return the address of the slot.
     [[nodiscard]]
     auto address() noexcept -> T *
     {
-        return reinterpret_cast<T *>(storage.data());
+        return std::addressof(storage.value);
     }
 
     // Only call when this slot contains a live T.
     [[nodiscard]]
-    auto element() noexcept -> T *
+    auto element() noexcept -> T &
     {
-        return std::launder(address());
+        return storage.value;
     }
 
-public:
-    std::array<std::byte, sizeof(T)> storage;
+    // Requires no live T in this slot. On success, starts its lifetime.
+    template <typename... Args>
+    auto construct(Args &&... args) noexcept(std::is_nothrow_constructible_v<T, Args...>) -> T &
+        requires std::is_constructible_v<T, Args...>
+    {
+        return *std::construct_at(address(), std::forward<Args>(args)...);
+    }
+
+    // Requires a live T. Ends its lifetime; must not be called twice.
+    auto destroy() noexcept -> void
+    {
+        std::destroy_at(address());
+    }
+
+private:
+    storage_type storage;
 };
 
 template <concepts::QueueElementType T, std::size_t Capacity>
@@ -185,7 +226,7 @@ public:
             auto read_seq = region_->consumer_cache_line.seq.load(std::memory_order_relaxed);
             const auto write_seq = region_->producer_cache_line.seq.load(std::memory_order_relaxed);
             while (read_seq != write_seq) {
-                std::destroy_at(slot(read_seq & index_mask).element());
+                slot(read_seq & index_mask).destroy();
                 ++read_seq;
             }
         }
@@ -298,6 +339,7 @@ public:
 
 private:
     // Allocate and initialize a region for either a storage owner or a queue owner.
+    [[nodiscard]]
     static auto _allocate(std::uint64_t schema_id) noexcept -> common::result<region *>
     {
         auto * region_memory = new (std::nothrow) region;
@@ -328,6 +370,7 @@ private:
     }
 
     // Bind the shared region to the memory.
+    [[nodiscard]]
     static auto
     _bind(std::span<std::byte> memory, spsc_queue_storage_mode mode, std::uint64_t schema_id) noexcept
         -> common::result<region *>

@@ -8,7 +8,6 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -275,8 +274,7 @@ private:
         }
 
         // Construct T in the slot corresponding to the write sequence.
-        auto * slot = slots_[write_seq & index_mask].address();
-        std::construct_at(slot, std::forward<Args>(args)...);
+        slots_[write_seq & index_mask].construct(std::forward<Args>(args)...);
 
         // Publish only after construction succeeds; exceptions leave the sequence unchanged.
         local_write_seq_ = write_seq + 1;
@@ -313,22 +311,22 @@ private:
         const auto first_count = std::min(values.size(), physical_capacity - index);
         auto * first_slots = slots_ + index;
         std::size_t constructed = 0;
-        const auto construct_one = [](T * slot, std::conditional_t<Move, T, const T> & value) noexcept(
-                                       is_nothrow_constructible
-                                   ) -> void {
+        const auto construct_one =
+            [](spsc_queue_slot<T> & slot,
+               std::conditional_t<Move, T, const T> & value) noexcept(is_nothrow_constructible) -> void {
             if constexpr (Move) {
-                std::construct_at(slot, std::move(value));
+                slot.construct(std::move(value));
             } else {
-                std::construct_at(slot, value);
+                slot.construct(value);
             }
         };
         const auto construct = [&]() noexcept(is_nothrow_constructible) -> void {
             // Split at the ring boundary once, keeping each loop's slot access contiguous.
             for (; constructed < first_count; ++constructed) {
-                construct_one(first_slots[constructed].address(), values[constructed]);
+                construct_one(first_slots[constructed], values[constructed]);
             }
             for (; constructed < values.size(); ++constructed) {
-                construct_one(slots_[constructed - first_count].address(), values[constructed]);
+                construct_one(slots_[constructed - first_count], values[constructed]);
             }
         };
 
@@ -339,16 +337,14 @@ private:
             try {
                 construct();
             } catch (...) {
-                if constexpr (!std::is_trivially_destructible_v<T>) {
-                    // Roll back the second segment before the first, in reverse construction order.
-                    while (constructed > first_count) {
-                        --constructed;
-                        std::destroy_at(slots_[constructed - first_count].element());
-                    }
-                    while (constructed != 0) {
-                        --constructed;
-                        std::destroy_at(first_slots[constructed].element());
-                    }
+                // Roll back the second segment before the first, in reverse construction order.
+                while (constructed > first_count) {
+                    --constructed;
+                    slots_[constructed - first_count].destroy();
+                }
+                while (constructed != 0) {
+                    --constructed;
+                    first_slots[constructed].destroy();
                 }
 
                 throw;
