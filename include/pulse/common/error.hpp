@@ -34,10 +34,9 @@ struct error_traits;
 // A valid error type must be an enum type with underlying type std::uint8_t
 // and a corresponding error_traits specialization.
 template <typename E>
-concept ErrorType =
-    std::is_enum_v<E> && std::same_as<std::underlying_type_t<E>, std::uint8_t> && requires {
-        { error_traits<E>::category } -> std::same_as<const error_category &>;
-    };
+concept ErrorType = std::is_enum_v<E> && std::same_as<std::underlying_type_t<E>, std::uint8_t> && requires {
+    { error_traits<E>::category } -> std::same_as<const error_category &>;
+};
 
 // Error class.
 // It provides encode() to combine category and code into a 16-bit value.

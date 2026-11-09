@@ -156,16 +156,10 @@ private:
     static constexpr std::uint64_t magic = 0x50554C5345535053;
     static constexpr std::uint16_t version_major = 1;
     static constexpr std::uint16_t version_minor = 0;
-    static constexpr std::uint32_t ready_state =
-        static_cast<std::uint32_t>(spsc_queue_state::Ready);
+    static constexpr std::uint32_t ready_state = static_cast<std::uint32_t>(spsc_queue_state::Ready);
 
 public:
-    explicit spsc_queue_storage(
-        construction_key,
-        region * region,
-        bool owns_memory,
-        bool owns_state
-    ) noexcept
+    explicit spsc_queue_storage(construction_key, region * region, bool owns_memory, bool owns_state) noexcept
         : region_(region)
         , owns_memory_(owns_memory)
         , owns_state_(owns_state)
@@ -227,11 +221,9 @@ public:
     // Initialization must finish and be synchronized with the caller before attachment.
     // schema_id must match the initializer; zero provides no application-specific type identity.
     [[nodiscard]]
-    static auto create(
-        std::span<std::byte> memory,
-        spsc_queue_storage_mode mode,
-        std::uint64_t schema_id = 0
-    ) noexcept -> common::result<spsc_queue_storage>
+    static auto
+    create(std::span<std::byte> memory, spsc_queue_storage_mode mode, std::uint64_t schema_id = 0) noexcept
+        -> common::result<spsc_queue_storage>
     {
         auto region_memory = _bind(memory, mode, schema_id);
         if (!region_memory) {
@@ -336,11 +328,9 @@ private:
     }
 
     // Bind the shared region to the memory.
-    static auto _bind(
-        std::span<std::byte> memory,
-        spsc_queue_storage_mode mode,
-        std::uint64_t schema_id
-    ) noexcept -> common::result<region *>
+    static auto
+    _bind(std::span<std::byte> memory, spsc_queue_storage_mode mode, std::uint64_t schema_id) noexcept
+        -> common::result<region *>
     {
         if (memory.data() == nullptr) {
             return std::unexpected(common::error {spsc_error_code::StorageNull});
@@ -367,8 +357,7 @@ private:
             return std::unexpected(common::error {spsc_error_code::StorageNotReady});
         }
         if (header.magic != magic || header.version_major != version_major ||
-            header.version_minor != version_minor ||
-            header.header_size != sizeof(spsc_queue_header) ||
+            header.version_minor != version_minor || header.header_size != sizeof(spsc_queue_header) ||
             header.region_size != sizeof(region) || header.capacity != Capacity ||
             header.slot_size != sizeof(T) || header.slot_alignment != alignof(T) ||
             header.slot_stride != sizeof(spsc_queue_slot<T>) ||

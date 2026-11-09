@@ -83,8 +83,7 @@ public:
     // For all batch operations, input must not overlap queue storage; do not reenter this endpoint
     // or mix pushes with an outstanding reservation. Input must remain valid throughout the call.
     [[nodiscard]]
-    auto try_push_bulk(std::span<const T> values) noexcept(std::is_nothrow_copy_constructible_v<T>)
-        -> bool
+    auto try_push_bulk(std::span<const T> values) noexcept(std::is_nothrow_copy_constructible_v<T>) -> bool
         requires std::is_copy_constructible_v<T>
     {
         assert(reserved_count_ == 0);
@@ -111,8 +110,7 @@ public:
     // the one whose construction threw, may have changed and are not restored.
     // Source objects remain alive in their moved-from states; their container's size does not change.
     [[nodiscard]]
-    auto try_push_bulk_move(std::span<T> values) noexcept(std::is_nothrow_move_constructible_v<T>)
-        -> bool
+    auto try_push_bulk_move(std::span<T> values) noexcept(std::is_nothrow_move_constructible_v<T>) -> bool
         requires std::is_move_constructible_v<T>
     {
         assert(reserved_count_ == 0);
@@ -187,8 +185,7 @@ public:
         // Check if the queue is full.
         if (write_seq == cached_write_limit_) {
             // Slow path. Read and update the producer's cached read sequence.
-            cached_write_limit_ =
-                consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity;
+            cached_write_limit_ = consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity;
 
             // Check if the queue is still full.
             if (write_seq == cached_write_limit_) {
@@ -269,8 +266,7 @@ private:
         // Check if the queue is full.
         if (write_seq == cached_write_limit_) {
             // Slow path. Read and update the producer's cached read sequence.
-            cached_write_limit_ =
-                consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity;
+            cached_write_limit_ = consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity;
 
             // Check if the queue is still full.
             if (write_seq == cached_write_limit_) {
@@ -297,8 +293,7 @@ private:
         auto available = static_cast<std::size_t>(cached_write_limit_ - local_write_seq_);
         // If the cached space is not enough, refresh the cached write limit, though it might still be not enough.
         if (available < std::min(requested, Capacity)) {
-            cached_write_limit_ =
-                consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity;
+            cached_write_limit_ = consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity;
             available = static_cast<std::size_t>(cached_write_limit_ - local_write_seq_);
         }
         return available;
@@ -306,9 +301,9 @@ private:
 
     // The caller has checked that this nonempty batch fits in the available slots.
     template <bool Move>
-    auto _push_batch(std::span<std::conditional_t<Move, T, const T>> values) noexcept(
-        std::is_nothrow_constructible_v<T, std::conditional_t<Move, T &&, const T &>>
-    ) -> void
+    auto _push_batch(
+        std::span<std::conditional_t<Move, T, const T>> values
+    ) noexcept(std::is_nothrow_constructible_v<T, std::conditional_t<Move, T &&, const T &>>) -> void
     {
         constexpr bool is_nothrow_constructible =
             std::is_nothrow_constructible_v<T, std::conditional_t<Move, T &&, const T &>>;
@@ -318,10 +313,9 @@ private:
         const auto first_count = std::min(values.size(), physical_capacity - index);
         auto * first_slots = slots_ + index;
         std::size_t constructed = 0;
-        const auto construct_one = [](
-                                       T * slot,
-                                       std::conditional_t<Move, T, const T> & value
-                                   ) noexcept(is_nothrow_constructible) -> void {
+        const auto construct_one = [](T * slot, std::conditional_t<Move, T, const T> & value) noexcept(
+                                       is_nothrow_constructible
+                                   ) -> void {
             if constexpr (Move) {
                 std::construct_at(slot, std::move(value));
             } else {

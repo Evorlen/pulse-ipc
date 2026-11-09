@@ -71,11 +71,9 @@ public:
 
     // The memory, lifetime and synchronization requirements are the same as storage_type::create.
     [[nodiscard]]
-    static auto create(
-        std::span<std::byte> memory,
-        spsc_queue_storage_mode mode,
-        std::uint64_t schema_id = 0
-    ) noexcept -> common::result<spsc_queue>
+    static auto
+    create(std::span<std::byte> memory, spsc_queue_storage_mode mode, std::uint64_t schema_id = 0) noexcept
+        -> common::result<spsc_queue>
     {
         auto region_memory = storage_type::_bind(memory, mode, schema_id);
         if (!region_memory) {

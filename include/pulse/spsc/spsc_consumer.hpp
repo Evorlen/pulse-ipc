@@ -71,11 +71,9 @@ public:
     auto try_pop_move(T & value) noexcept(std::is_nothrow_move_assignable_v<T>) -> bool
         requires std::is_move_assignable_v<T>
     {
-        return _try_consume(
-            [&value](T & element) noexcept(std::is_nothrow_move_assignable_v<T>) -> void {
-                value = std::move(element);
-            }
-        );
+        return _try_consume([&value](T & element) noexcept(std::is_nothrow_move_assignable_v<T>) -> void {
+            value = std::move(element);
+        });
     }
 
     // Copy-assign the entire output, or return false without assigning anything when data is insufficient.
@@ -110,8 +108,7 @@ public:
     // All elements remain queued, but attempted source and output elements, including the throwing
     // pair, may have changed and are not restored. Retrying does not recover the original values.
     [[nodiscard]]
-    auto try_pop_bulk_move(std::span<T> values) noexcept(std::is_nothrow_move_assignable_v<T>)
-        -> bool
+    auto try_pop_bulk_move(std::span<T> values) noexcept(std::is_nothrow_move_assignable_v<T>) -> bool
         requires std::is_move_assignable_v<T>
     {
         assert(borrowed_count_ == 0);
@@ -135,8 +132,7 @@ public:
     // Empty output or an empty queue returns zero. Assignment failure leaves the whole prefix queued,
     // although output elements may have been modified. Release the prefix once on success.
     [[nodiscard]]
-    auto try_pop_burst(std::span<T> values) noexcept(std::is_nothrow_copy_assignable_v<T>)
-        -> std::size_t
+    auto try_pop_burst(std::span<T> values) noexcept(std::is_nothrow_copy_assignable_v<T>) -> std::size_t
         requires std::is_copy_assignable_v<T>
     {
         assert(borrowed_count_ == 0);
@@ -157,8 +153,7 @@ public:
     // If assignment throws, the whole prefix remains queued and the exception propagates.
     // Attempted source and output elements may have changed and are not restored, as in bulk move.
     [[nodiscard]]
-    auto try_pop_burst_move(std::span<T> values) noexcept(std::is_nothrow_move_assignable_v<T>)
-        -> std::size_t
+    auto try_pop_burst_move(std::span<T> values) noexcept(std::is_nothrow_move_assignable_v<T>) -> std::size_t
         requires std::is_move_assignable_v<T>
     {
         assert(borrowed_count_ == 0);
@@ -181,8 +176,7 @@ public:
     // The consumer must not retain element references beyond the call or reenter consumption.
     template <typename Consumer>
     [[nodiscard]]
-    auto try_consume(Consumer && consume) noexcept(std::is_nothrow_invocable_v<Consumer, T &>)
-        -> bool
+    auto try_consume(Consumer && consume) noexcept(std::is_nothrow_invocable_v<Consumer, T &>) -> bool
         requires std::is_invocable_v<Consumer, T &>
     {
         return _try_consume(std::forward<Consumer>(consume));
@@ -266,8 +260,7 @@ private:
     // have been modified; the read sequence stays unchanged.
     template <typename Consumer>
     [[nodiscard]]
-    auto _try_consume(Consumer && consume) noexcept(std::is_nothrow_invocable_v<Consumer, T &>)
-        -> bool
+    auto _try_consume(Consumer && consume) noexcept(std::is_nothrow_invocable_v<Consumer, T &>) -> bool
         requires std::is_invocable_v<Consumer, T &>
     {
         assert(borrowed_count_ == 0);

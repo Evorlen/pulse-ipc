@@ -28,7 +28,7 @@ IndentWidth: 4                                      # Use 4 spaces for indentati
 ContinuationIndentWidth: 4                          # Indent continuation relative to the original line by 4 spaces
 ConstructorInitializerIndentWidth: 4                # Indent constructor initializer list by 4 spaces
 AccessModifierOffset: -4                            # public etc. modifiers are indented -4 from class, same level as class
-ColumnLimit: 100                                    # Target line width is 100 columns, not a hard limit
+ColumnLimit: 110                                    # Target line width is 110 columns, not a hard limit
 PenaltyReturnTypeOnItsOwnLine: 200                  # Penalty for putting the return type on its own line; 200 prefers keeping it with the function name
 BreakTemplateDeclarations: Yes                      # Break template declarations
 

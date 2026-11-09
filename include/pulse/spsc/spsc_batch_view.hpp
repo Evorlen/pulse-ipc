@@ -38,7 +38,7 @@ public:
     {
     private:
         friend class basic_spsc_queue_batch_view;
-    
+
     public:
         segment_type() noexcept = default;
 
