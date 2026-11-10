@@ -202,7 +202,10 @@ public:
             }
         }
 
+#ifndef NDEBUG
         borrowed_count_ = std::max(borrowed_count_, std::size_t {1});
+#endif
+
         return std::addressof(slots_[read_seq & index_mask].element());
     }
 
@@ -221,7 +224,10 @@ public:
             return {};
         }
 
+#ifndef NDEBUG
         borrowed_count_ = std::max(borrowed_count_, count);
+#endif
+
         const auto index = static_cast<std::size_t>(local_read_seq_ & index_mask);
         const auto first_count = std::min(count, physical_capacity - index);
         return spsc_queue_read_view<T> {slots_ + index, first_count, slots_, count - first_count};
@@ -246,7 +252,10 @@ public:
 
         _destroy_batch(read_seq, count);
 
+#ifndef NDEBUG
         borrowed_count_ = 0;
+#endif
+
         if (count != 0) {
             local_read_seq_ = read_seq + count;
             consumer_cache_line_->seq.store(local_read_seq_, std::memory_order_release);
@@ -360,7 +369,10 @@ private:
     spsc_queue_slot<T> * slots_;
     std::uint64_t local_read_seq_;
     std::uint64_t cached_read_limit_;
+
+#ifndef NDEBUG
     std::size_t borrowed_count_ {0};
+#endif
 };
 
 } // namespace pulse::spsc

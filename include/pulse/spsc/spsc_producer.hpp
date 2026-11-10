@@ -192,7 +192,9 @@ public:
             }
         }
 
+#ifndef NDEBUG
         reserved_count_ = std::max(reserved_count_, std::size_t {1});
+#endif
 
         return slots_[write_seq & index_mask].address();
     }
@@ -212,7 +214,10 @@ public:
             return {};
         }
 
+#ifndef NDEBUG
         reserved_count_ = std::max(reserved_count_, count);
+#endif
+
         const auto index = static_cast<std::size_t>(local_write_seq_ & index_mask);
         const auto first_count = std::min(count, physical_capacity - index);
         return spsc_queue_write_view<T> {slots_ + index, first_count, slots_, count - first_count};
@@ -233,7 +238,9 @@ public:
     {
         assert(count <= reserved_count_);
 
+#ifndef NDEBUG
         reserved_count_ = 0;
+#endif
 
         if (count != 0) {
             local_write_seq_ += count;
@@ -246,7 +253,9 @@ public:
     // Resolve reservations before retiring the endpoint; its destructor does not clean them up.
     auto cancel() noexcept -> void
     {
+#ifndef NDEBUG
         reserved_count_ = 0;
+#endif
     }
 
 private:
@@ -362,7 +371,10 @@ private:
     spsc_queue_slot<T> * slots_;
     std::uint64_t local_write_seq_;
     std::uint64_t cached_write_limit_;
+
+#ifndef NDEBUG
     std::size_t reserved_count_ {0};
+#endif
 };
 
 } // namespace pulse::spsc
