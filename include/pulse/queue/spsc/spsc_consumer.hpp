@@ -17,10 +17,10 @@
 #include "pulse/concepts/size.hpp"
 #include "pulse/concepts/type.hpp"
 #include "pulse/config/config.hpp"
-#include "pulse/spsc/spsc_batch_view.hpp"
-#include "pulse/spsc/spsc_storage.hpp"
+#include "pulse/queue/spsc/spsc_batch_view.hpp"
+#include "pulse/queue/spsc/spsc_storage.hpp"
 
-namespace pulse::spsc
+namespace pulse::queue::spsc
 {
 
 // SPSC Queue Consumer.
@@ -375,4 +375,4 @@ private:
 #endif
 };
 
-} // namespace pulse::spsc
+} // namespace pulse::queue::spsc

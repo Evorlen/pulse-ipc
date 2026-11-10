@@ -7,7 +7,7 @@
 
 #include "pulse/common/error.hpp"
 
-namespace pulse::spsc
+namespace pulse::queue::spsc
 {
 
 // Error codes for the SPSC queue.
@@ -22,13 +22,13 @@ enum class spsc_error_code : std::uint8_t
     StorageAllocationFailed = 7,
 };
 
-} // namespace pulse::spsc
+} // namespace pulse::queue::spsc
 
 namespace pulse::common
 {
 
 template <>
-struct error_traits<spsc::spsc_error_code>
+struct error_traits<queue::spsc::spsc_error_code>
 {
     static constexpr error_category category = error_category::SPSC;
 };

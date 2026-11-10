@@ -13,11 +13,11 @@
 #include "pulse/common/result.hpp"
 #include "pulse/concepts/size.hpp"
 #include "pulse/concepts/type.hpp"
-#include "pulse/spsc/spsc_consumer.hpp"
-#include "pulse/spsc/spsc_producer.hpp"
-#include "pulse/spsc/spsc_storage.hpp"
+#include "pulse/queue/spsc/spsc_consumer.hpp"
+#include "pulse/queue/spsc/spsc_producer.hpp"
+#include "pulse/queue/spsc/spsc_storage.hpp"
 
-namespace pulse::spsc
+namespace pulse::queue::spsc
 {
 
 // SPSC Queue.
@@ -150,4 +150,4 @@ private:
     storage_type storage_;
 };
 
-} // namespace pulse::spsc
+} // namespace pulse::queue::spsc
