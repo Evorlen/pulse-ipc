@@ -20,20 +20,10 @@ namespace pulse::spsc
 template <concepts::QueueElementType T, bool Constructed>
 class basic_spsc_queue_batch_view final
 {
-private:
-    template <concepts::QueueElementType U, std::size_t Capacity>
-        requires concepts::QueueCapacityType<Capacity>
-    friend class spsc_queue_producer;
-
-    template <concepts::QueueElementType U, std::size_t Capacity>
-        requires concepts::QueueCapacityType<Capacity>
-    friend class spsc_queue_consumer;
-
-    using slot_type = spsc_queue_slot<T>;
-
 public:
     using reference = std::conditional_t<Constructed, T &, T *>;
 
+    // A segment of the batch view.
     class segment_type final
     {
     private:
@@ -43,29 +33,32 @@ public:
         segment_type() noexcept = default;
 
     private:
-        explicit segment_type(slot_type * slots, std::size_t size) noexcept
+        explicit segment_type(spsc_queue_slot<T> * slots, std::size_t size) noexcept
             : slots_(slots)
             , size_(size)
         {}
 
     public:
+        // Return the number of slots in the segment.
         [[nodiscard]]
         auto size() const noexcept -> std::size_t
         {
             return size_;
         }
 
+        // Return true if the segment is empty.
         [[nodiscard]]
         auto empty() const noexcept -> bool
         {
             return size_ == 0;
         }
 
-        // Raw views return an address for construct_at; live views return an existing element.
+        // Raw views return an address for construct_at; live views return an existing element. Caller must check index < size().
         [[nodiscard]]
         auto operator[](std::size_t index) const noexcept -> reference
         {
-            assert(index < size_);
+            assert(index < size());
+
             if constexpr (Constructed) {
                 return slots_[index].element();
             } else {
@@ -74,18 +67,27 @@ public:
         }
 
     private:
-        slot_type * slots_ {nullptr};
+        spsc_queue_slot<T> * slots_ {nullptr};
         std::size_t size_ {0};
     };
+
+private:
+    template <concepts::QueueElementType U, std::size_t Capacity>
+        requires concepts::QueueCapacityType<Capacity>
+    friend class spsc_queue_producer;
+
+    template <concepts::QueueElementType U, std::size_t Capacity>
+        requires concepts::QueueCapacityType<Capacity>
+    friend class spsc_queue_consumer;
 
 public:
     basic_spsc_queue_batch_view() noexcept = default;
 
 private:
     explicit basic_spsc_queue_batch_view(
-        slot_type * first,
+        spsc_queue_slot<T> * first,
         std::size_t first_size,
-        slot_type * second,
+        spsc_queue_slot<T> * second,
         std::size_t second_size
     ) noexcept
         : first_(first, first_size)
@@ -93,34 +95,40 @@ private:
     {}
 
 public:
+    // Return the number of slots in the batch view.
     [[nodiscard]]
     auto size() const noexcept -> std::size_t
     {
         return first_.size() + second_.size();
     }
 
+    // Return true if the batch view is empty.
     [[nodiscard]]
     auto empty() const noexcept -> bool
     {
         return size() == 0;
     }
 
+    // Return the first segment of the batch view.
     [[nodiscard]]
     auto first() const noexcept -> segment_type
     {
         return first_;
     }
 
+    // Return the second segment of the batch view.
     [[nodiscard]]
     auto second() const noexcept -> segment_type
     {
         return second_;
     }
 
+    // Return the element at the given index. Caller must check index < size().
     [[nodiscard]]
     auto operator[](std::size_t index) const noexcept -> reference
     {
         assert(index < size());
+
         return index < first_.size() ? first_[index] : second_[index - first_.size()];
     }
 
