@@ -80,10 +80,9 @@ private:
         requires concepts::QueueCapacityType<Capacity>
     friend class spsc_queue_consumer;
 
-public:
+private:
     basic_spsc_queue_batch_view() noexcept = default;
 
-private:
     explicit basic_spsc_queue_batch_view(
         spsc_queue_slot<T> * first,
         std::size_t first_size,
