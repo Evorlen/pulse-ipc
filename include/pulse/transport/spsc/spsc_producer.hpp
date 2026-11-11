@@ -15,10 +15,10 @@
 #include "pulse/concepts/size.hpp"
 #include "pulse/concepts/type.hpp"
 #include "pulse/config/config.hpp"
-#include "pulse/queue/spsc/spsc_batch_view.hpp"
-#include "pulse/queue/spsc/spsc_storage.hpp"
+#include "pulse/transport/spsc/spsc_batch_view.hpp"
+#include "pulse/transport/spsc/spsc_storage.hpp"
 
-namespace pulse::queue::spsc
+namespace pulse::transport::spsc
 {
 
 // SPSC Queue Producer.
@@ -377,4 +377,4 @@ private:
 #endif
 };
 
-} // namespace pulse::queue::spsc
+} // namespace pulse::transport::spsc

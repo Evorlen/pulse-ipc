@@ -19,9 +19,9 @@
 #include "pulse/concepts/size.hpp"
 #include "pulse/concepts/type.hpp"
 #include "pulse/config/config.hpp"
-#include "pulse/queue/spsc/spsc_error.hpp"
+#include "pulse/transport/spsc/spsc_error.hpp"
 
-namespace pulse::queue::spsc
+namespace pulse::transport::spsc
 {
 
 static_assert(
@@ -418,4 +418,4 @@ private:
     bool owns_state_;
 };
 
-} // namespace pulse::queue::spsc
+} // namespace pulse::transport::spsc

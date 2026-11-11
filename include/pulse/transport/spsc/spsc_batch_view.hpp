@@ -9,9 +9,9 @@
 
 #include "pulse/concepts/size.hpp"
 #include "pulse/concepts/type.hpp"
-#include "pulse/queue/spsc/spsc_storage.hpp"
+#include "pulse/transport/spsc/spsc_storage.hpp"
 
-namespace pulse::queue::spsc
+namespace pulse::transport::spsc
 {
 
 // A non-owning view of raw slots or live elements. A ring wrap produces two physical segments.
@@ -143,4 +143,4 @@ using spsc_queue_write_view = basic_spsc_queue_batch_view<T, false>;
 template <concepts::QueueElementType T>
 using spsc_queue_read_view = basic_spsc_queue_batch_view<T, true>;
 
-} // namespace pulse::queue::spsc
+} // namespace pulse::transport::spsc
