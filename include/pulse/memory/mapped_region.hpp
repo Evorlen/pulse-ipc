@@ -38,9 +38,6 @@ public:
     auto bytes() const noexcept -> std::span<const std::byte>;
 
 private:
-    void _unmap() noexcept;
-
-private:
     void * address_ {nullptr};
     std::size_t size_ {0};
 };

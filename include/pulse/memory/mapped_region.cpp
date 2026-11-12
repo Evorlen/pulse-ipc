@@ -15,23 +15,16 @@ namespace pulse::memory
 {
 
 mapped_region::mapped_region(mapped_region && other) noexcept
-    : address_(other.address_)
-    , size_(other.size_)
-{
-    other.address_ = nullptr;
-    other.size_ = 0;
-}
+    : address_(std::exchange(other.address_, nullptr))
+    , size_(std::exchange(other.size_, std::size_t {0}))
+{}
 
 auto mapped_region::operator=(mapped_region && other) noexcept -> mapped_region &
 {
     if (this != &other) {
-        _unmap();
-
-        address_ = nullptr;
-        size_ = 0;
-
-        std::swap(address_, other.address_);
-        std::swap(size_, other.size_);
+        mapped_region incoming(std::move(other));
+        std::swap(address_, incoming.address_);
+        std::swap(size_, incoming.size_);
     }
 
     return *this;
@@ -39,7 +32,15 @@ auto mapped_region::operator=(mapped_region && other) noexcept -> mapped_region 
 
 mapped_region::~mapped_region() noexcept
 {
-    _unmap();
+    if (size_ == 0) {
+        return;
+    }
+
+#if defined(__linux__)
+    static_cast<void>(::munmap(address_, size_));
+#else
+#error "Unsupported platform"
+#endif
 }
 
 mapped_region::mapped_region(void * address, std::size_t size) noexcept
@@ -55,19 +56,6 @@ auto mapped_region::bytes() noexcept -> std::span<std::byte>
 auto mapped_region::bytes() const noexcept -> std::span<const std::byte>
 {
     return {static_cast<const std::byte *>(address_), size_};
-}
-
-void mapped_region::_unmap() noexcept
-{
-    if (size_ == 0) {
-        return;
-    }
-
-#if defined(__linux__)
-    static_cast<void>(::munmap(address_, size_));
-#else
-#error "Unsupported platform"
-#endif
 }
 
 } // namespace pulse::memory
