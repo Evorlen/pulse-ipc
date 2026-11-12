@@ -17,6 +17,7 @@ enum class error_category : std::uint8_t
 {
     Unknown = 0,
     SPSC = 1,
+    Memory = 2,
 };
 
 // Traits for error types.
