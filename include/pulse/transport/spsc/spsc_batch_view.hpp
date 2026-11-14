@@ -17,6 +17,7 @@ namespace pulse::transport::spsc
 // A non-owning view of raw slots or live elements. A ring wrap produces two physical segments.
 // The underlying array contains slots, not T objects forming a T array; index through the slots.
 // Views and their segments must not outlive their endpoint or the queue state owner.
+// Closing the endpoint invalidates its views and segments even if the endpoint object stays alive.
 template <concepts::QueueElementType T, bool Constructed>
 class basic_spsc_queue_batch_view final
 {

@@ -126,8 +126,9 @@ public:
         return alignof(storage_type);
     }
 
-    // Each role may be attached only once during this queue's lifetime, including after
-    // its endpoint is destroyed. Concurrent attachment is allowed; endpoints borrow the queue.
+    // Each role may have only one open endpoint. Closing or destroying it allows reattachment.
+    // Reattachment preserves queued elements and sequence numbers.
+    // Concurrent attachment is allowed; endpoints borrow the queue.
     [[nodiscard]]
     auto try_attach_producer() noexcept -> std::optional<spsc_queue_producer<T, Capacity>>
     {
@@ -135,7 +136,7 @@ public:
         const bool success = producer_attached_.compare_exchange_strong(
             expected,
             true,
-            std::memory_order_relaxed,
+            std::memory_order_acquire,
             std::memory_order_relaxed
         );
 
@@ -146,7 +147,8 @@ public:
         return std::optional<spsc_queue_producer<T, Capacity>>(
             std::in_place,
             typename spsc_queue_producer<T, Capacity>::construction_key {},
-            *storage_
+            *storage_,
+            &producer_attached_
         );
     }
 
@@ -158,7 +160,7 @@ public:
         const bool success = consumer_attached_.compare_exchange_strong(
             expected,
             true,
-            std::memory_order_relaxed,
+            std::memory_order_acquire,
             std::memory_order_relaxed
         );
 
@@ -169,7 +171,8 @@ public:
         return std::optional<spsc_queue_consumer<T, Capacity>>(
             std::in_place,
             typename spsc_queue_consumer<T, Capacity>::construction_key {},
-            *storage_
+            *storage_,
+            &consumer_attached_
         );
     }
 

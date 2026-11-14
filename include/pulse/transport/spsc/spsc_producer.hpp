@@ -47,12 +47,17 @@ private:
     static constexpr std::size_t index_mask = physical_capacity - 1;
 
 public:
-    explicit spsc_queue_producer(construction_key, spsc_queue_storage<T, Capacity> & storage) noexcept
+    explicit spsc_queue_producer(
+        construction_key,
+        spsc_queue_storage<T, Capacity> & storage,
+        std::atomic<bool> * producer_attached
+    ) noexcept
         : producer_cache_line_(&storage.producer_cache_line())
         , consumer_cache_line_(&storage.consumer_cache_line())
         , slots_(&storage.slot(0))
         , local_write_seq_(producer_cache_line_->seq.load(std::memory_order_relaxed))
         , cached_write_limit_(consumer_cache_line_->seq.load(std::memory_order_acquire) + Capacity)
+        , producer_attached_(producer_attached)
     {}
 
     spsc_queue_producer(const spsc_queue_producer &) = delete;
@@ -62,6 +67,11 @@ public:
     spsc_queue_producer(spsc_queue_producer &&) = delete;
 
     auto operator=(spsc_queue_producer &&) -> spsc_queue_producer & = delete;
+
+    ~spsc_queue_producer() noexcept
+    {
+        close();
+    }
 
 public:
     // Copy a T value into the queue.
@@ -98,6 +108,7 @@ public:
     auto try_push_bulk(std::span<const T> values) noexcept(std::is_nothrow_copy_constructible_v<T>) -> bool
         requires std::is_copy_constructible_v<T>
     {
+        assert(!closed_);
         assert(reserved_count_ == 0);
 
         const auto count = values.size();
@@ -125,6 +136,7 @@ public:
     auto try_push_bulk_move(std::span<T> values) noexcept(std::is_nothrow_move_constructible_v<T>) -> bool
         requires std::is_move_constructible_v<T>
     {
+        assert(!closed_);
         assert(reserved_count_ == 0);
 
         const auto count = values.size();
@@ -150,6 +162,7 @@ public:
         -> std::size_t
         requires std::is_copy_constructible_v<T>
     {
+        assert(!closed_);
         assert(reserved_count_ == 0);
 
         if (values.empty()) [[unlikely]] {
@@ -172,6 +185,7 @@ public:
         -> std::size_t
         requires std::is_move_constructible_v<T>
     {
+        assert(!closed_);
         assert(reserved_count_ == 0);
 
         if (values.empty()) [[unlikely]] {
@@ -187,10 +201,12 @@ public:
 
     // Reserve raw storage for one T, or return nullptr when full.
     // Repeated calls return the same reservation. Construct a T before commit().
-    // The pointer expires at commit/cancel; endpoint operations must not be reentered.
+    // The pointer expires at commit/cancel or close; endpoint operations must not be reentered.
     [[nodiscard]]
     auto try_reserve() noexcept -> T *
     {
+        assert(!closed_);
+
         // The producer owns its local write sequence; only refresh the peer's sequence when full.
         const auto write_seq = local_write_seq_;
 
@@ -213,11 +229,13 @@ public:
     }
 
     // Reserve up to max_count slots without constructing or publishing any T objects.
-    // Repeated acquisitions share the same start; their views remain valid until commit/cancel.
+    // Repeated acquisitions share the same start; their views remain valid until commit/cancel or close.
     // Construct each committed element exactly once. A zero request returns an empty view.
     [[nodiscard]]
     auto try_reserve_up_to(std::size_t max_count) noexcept -> spsc_queue_write_view<T>
     {
+        assert(!closed_);
+
         if (max_count == 0) [[unlikely]] {
             return {};
         }
@@ -249,6 +267,7 @@ public:
     // commit(0) ends the reservation without publishing. The endpoint never constructs/destroys here.
     auto commit(std::size_t count) noexcept -> void
     {
+        assert(!closed_);
         assert(count <= reserved_count_);
 
 #ifndef NDEBUG
@@ -263,12 +282,30 @@ public:
 
     // End all reservations without publishing; caller must destroy any constructed T first.
     // Raw storage has no known lifetime, so cancel never destroys elements itself.
-    // Resolve reservations before retiring the endpoint; its destructor does not clean them up.
+    // Resolve reservations before closing or destroying the endpoint; neither cleans them up.
     auto cancel() noexcept -> void
     {
+        assert(!closed_);
+
 #ifndef NDEBUG
         reserved_count_ = 0;
 #endif
+    }
+
+    // Return the producer role without changing queued elements or the write sequence.
+    // Resolve every reservation first. Repeated close calls have no effect.
+    // Do not overlap close with another operation on this endpoint or reenter it from a callback.
+    // The queue must remain alive until close returns; only close or destruction may follow.
+    auto close() noexcept -> void
+    {
+        if (closed_) {
+            return;
+        }
+
+        assert(reserved_count_ == 0);
+
+        closed_ = true;
+        producer_attached_->store(false, std::memory_order_release);
     }
 
 private:
@@ -279,6 +316,7 @@ private:
     auto _try_emplace(Args &&... args) noexcept(std::is_nothrow_constructible_v<T, Args...>) -> bool
         requires std::is_constructible_v<T, Args...>
     {
+        assert(!closed_);
         assert(reserved_count_ == 0);
 
         // The producer owns its local write sequence; only refresh the peer's sequence when full.
@@ -384,6 +422,8 @@ private:
     storage::spsc_queue_slot<T> * slots_;
     std::uint64_t local_write_seq_;
     std::uint64_t cached_write_limit_;
+    std::atomic<bool> * producer_attached_;
+    bool closed_ {false};
 
 #ifndef NDEBUG
     std::size_t reserved_count_ {0};

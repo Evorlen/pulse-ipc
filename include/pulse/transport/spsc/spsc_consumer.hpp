@@ -49,12 +49,17 @@ private:
     static constexpr std::size_t index_mask = physical_capacity - 1;
 
 public:
-    explicit spsc_queue_consumer(construction_key, spsc_queue_storage<T, Capacity> & storage) noexcept
+    explicit spsc_queue_consumer(
+        construction_key,
+        spsc_queue_storage<T, Capacity> & storage,
+        std::atomic<bool> * consumer_attached
+    ) noexcept
         : consumer_cache_line_(&storage.consumer_cache_line())
         , producer_cache_line_(&storage.producer_cache_line())
         , slots_(&storage.slot(0))
         , local_read_seq_(consumer_cache_line_->seq.load(std::memory_order_relaxed))
         , cached_read_limit_(producer_cache_line_->seq.load(std::memory_order_acquire))
+        , consumer_attached_(consumer_attached)
     {}
 
     spsc_queue_consumer(const spsc_queue_consumer &) = delete;
@@ -65,12 +70,19 @@ public:
 
     auto operator=(spsc_queue_consumer &&) -> spsc_queue_consumer & = delete;
 
+    ~spsc_queue_consumer() noexcept
+    {
+        close();
+    }
+
 public:
     // Copy a T value out of the queue.
     [[nodiscard]]
     auto try_pop(T & value) noexcept(std::is_nothrow_copy_assignable_v<T>) -> bool
         requires std::is_copy_assignable_v<T>
     {
+        assert(!closed_);
+
         return _try_consume(
             [&value](const T & element) noexcept(std::is_nothrow_copy_assignable_v<T>) -> void {
                 value = element;
@@ -84,6 +96,8 @@ public:
     auto try_pop_move(T & value) noexcept(std::is_nothrow_move_assignable_v<T>) -> bool
         requires std::is_move_assignable_v<T>
     {
+        assert(!closed_);
+
         return _try_consume([&value](T & element) noexcept(std::is_nothrow_move_assignable_v<T>) -> void {
             value = std::move(element);
         });
@@ -98,6 +112,7 @@ public:
     auto try_pop_bulk(std::span<T> values) noexcept(std::is_nothrow_copy_assignable_v<T>) -> bool
         requires std::is_copy_assignable_v<T>
     {
+        assert(!closed_);
         assert(borrowed_count_ == 0);
 
         const auto count = values.size();
@@ -124,6 +139,7 @@ public:
     auto try_pop_bulk_move(std::span<T> values) noexcept(std::is_nothrow_move_assignable_v<T>) -> bool
         requires std::is_move_assignable_v<T>
     {
+        assert(!closed_);
         assert(borrowed_count_ == 0);
 
         const auto count = values.size();
@@ -148,6 +164,7 @@ public:
     auto try_pop_burst(std::span<T> values) noexcept(std::is_nothrow_copy_assignable_v<T>) -> std::size_t
         requires std::is_copy_assignable_v<T>
     {
+        assert(!closed_);
         assert(borrowed_count_ == 0);
 
         if (values.empty()) [[unlikely]] {
@@ -169,6 +186,7 @@ public:
     auto try_pop_burst_move(std::span<T> values) noexcept(std::is_nothrow_move_assignable_v<T>) -> std::size_t
         requires std::is_move_assignable_v<T>
     {
+        assert(!closed_);
         assert(borrowed_count_ == 0);
 
         if (values.empty()) [[unlikely]] {
@@ -192,15 +210,19 @@ public:
     auto try_consume(Consumer && consume) noexcept(std::is_nothrow_invocable_v<Consumer, T &>) -> bool
         requires std::is_invocable_v<Consumer, T &>
     {
+        assert(!closed_);
+
         return _try_consume(std::forward<Consumer>(consume));
     }
 
     // Borrow the committed front element, or return nullptr when empty.
     // Repeated calls return the same element until release(). Do not destroy it yourself.
-    // The pointer expires at release; endpoint operations must not be reentered.
+    // The pointer expires at release or close; endpoint operations must not be reentered.
     [[nodiscard]]
     auto try_borrow() noexcept -> T *
     {
+        assert(!closed_);
+
         // The consumer owns its local read sequence; only refresh the peer's sequence when empty.
         const auto read_seq = local_read_seq_;
 
@@ -223,11 +245,13 @@ public:
     }
 
     // Borrow up to max_count committed elements, split into two segments when the ring wraps.
-    // Repeated acquisitions share the same front and stay valid until release, including release(0).
+    // Repeated acquisitions share the same front and stay valid until release or close, including release(0).
     // Do not destroy borrowed elements yourself. A zero request returns an empty view.
     [[nodiscard]]
     auto try_borrow_up_to(std::size_t max_count) noexcept -> spsc_queue_read_view<T>
     {
+        assert(!closed_);
+
         if (max_count == 0) [[unlikely]] {
             return {};
         }
@@ -251,6 +275,8 @@ public:
     // with an outstanding borrow. Retiring an endpoint leaves peeks queued.
     auto release() noexcept -> void
     {
+        assert(!closed_);
+
         release(1);
     }
 
@@ -259,6 +285,7 @@ public:
     // release(0) only ends the borrow, preserving all elements and publishing no read sequence.
     auto release(std::size_t count) noexcept -> void
     {
+        assert(!closed_);
         assert(count <= borrowed_count_);
 
         const auto read_seq = local_read_seq_;
@@ -273,6 +300,25 @@ public:
             local_read_seq_ = read_seq + count;
             consumer_cache_line_->seq.store(local_read_seq_, std::memory_order_release);
         }
+    }
+
+    // Return the consumer role, ending every borrow without consuming queued elements.
+    // Preserve the read sequence and invalidate all borrowed pointers/views.
+    // Do not overlap close with another operation on this endpoint or reenter it from a callback.
+    // The queue must remain alive until close returns; only close or destruction may follow.
+    // Repeated close calls have no effect.
+    auto close() noexcept -> void
+    {
+        if (closed_) {
+            return;
+        }
+
+#ifndef NDEBUG
+        borrowed_count_ = 0;
+#endif
+
+        closed_ = true;
+        consumer_attached_->store(false, std::memory_order_release);
     }
 
 private:
@@ -382,6 +428,8 @@ private:
     storage::spsc_queue_slot<T> * slots_;
     std::uint64_t local_read_seq_;
     std::uint64_t cached_read_limit_;
+    std::atomic<bool> * consumer_attached_;
+    bool closed_ {false};
 
 #ifndef NDEBUG
     std::size_t borrowed_count_ {0};
