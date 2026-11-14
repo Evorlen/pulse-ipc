@@ -9,7 +9,7 @@
 
 #include "pulse/concepts/size.hpp"
 #include "pulse/concepts/type.hpp"
-#include "pulse/transport/spsc/spsc_storage.hpp"
+#include "pulse/storage/slot.hpp"
 
 namespace pulse::transport::spsc
 {
@@ -33,7 +33,7 @@ public:
         segment_type() noexcept = default;
 
     private:
-        explicit segment_type(spsc_queue_slot<T> * slots, std::size_t size) noexcept
+        explicit segment_type(storage::spsc_queue_slot<T> * slots, std::size_t size) noexcept
             : slots_(slots)
             , size_(size)
         {}
@@ -67,7 +67,7 @@ public:
         }
 
     private:
-        spsc_queue_slot<T> * slots_ {nullptr};
+        storage::spsc_queue_slot<T> * slots_ {nullptr};
         std::size_t size_ {0};
     };
 
@@ -84,9 +84,9 @@ private:
     basic_spsc_queue_batch_view() noexcept = default;
 
     explicit basic_spsc_queue_batch_view(
-        spsc_queue_slot<T> * first,
+        storage::spsc_queue_slot<T> * first,
         std::size_t first_size,
-        spsc_queue_slot<T> * second,
+        storage::spsc_queue_slot<T> * second,
         std::size_t second_size
     ) noexcept
         : first_(first, first_size)

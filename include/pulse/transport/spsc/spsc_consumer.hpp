@@ -17,11 +17,16 @@
 #include "pulse/concepts/size.hpp"
 #include "pulse/concepts/type.hpp"
 #include "pulse/config/config.hpp"
+#include "pulse/storage/slot.hpp"
 #include "pulse/transport/spsc/spsc_batch_view.hpp"
 #include "pulse/transport/spsc/spsc_storage.hpp"
 
 namespace pulse::transport::spsc
 {
+
+template <concepts::QueueElementType T, std::size_t Capacity>
+    requires concepts::QueueCapacityType<Capacity>
+class spsc_queue;
 
 // SPSC Queue Consumer.
 template <concepts::QueueElementType T, std::size_t Capacity>
@@ -31,10 +36,27 @@ class alignas(config::cache_line_alignment) spsc_queue_consumer final
 private:
     friend class spsc_queue<T, Capacity>;
 
+    class construction_key final
+    {
+    private:
+        friend class spsc_queue<T, Capacity>;
+
+    private:
+        construction_key() noexcept = default;
+    };
+
     static constexpr std::size_t physical_capacity = std::bit_ceil(Capacity);
     static constexpr std::size_t index_mask = physical_capacity - 1;
 
 public:
+    explicit spsc_queue_consumer(construction_key, spsc_queue_storage<T, Capacity> & storage) noexcept
+        : consumer_cache_line_(&storage.consumer_cache_line())
+        , producer_cache_line_(&storage.producer_cache_line())
+        , slots_(&storage.slot(0))
+        , local_read_seq_(consumer_cache_line_->seq.load(std::memory_order_relaxed))
+        , cached_read_limit_(producer_cache_line_->seq.load(std::memory_order_acquire))
+    {}
+
     spsc_queue_consumer(const spsc_queue_consumer &) = delete;
 
     auto operator=(const spsc_queue_consumer &) -> spsc_queue_consumer & = delete;
@@ -42,15 +64,6 @@ public:
     spsc_queue_consumer(spsc_queue_consumer &&) = delete;
 
     auto operator=(spsc_queue_consumer &&) -> spsc_queue_consumer & = delete;
-
-private:
-    explicit spsc_queue_consumer(spsc_queue_storage<T, Capacity> & storage) noexcept
-        : consumer_cache_line_(&storage.consumer_cache_line())
-        , producer_cache_line_(&storage.producer_cache_line())
-        , slots_(&storage.slot(0))
-        , local_read_seq_(consumer_cache_line_->seq.load(std::memory_order_relaxed))
-        , cached_read_limit_(producer_cache_line_->seq.load(std::memory_order_acquire))
-    {}
 
 public:
     // Copy a T value out of the queue.
@@ -324,7 +337,7 @@ private:
         const auto index = static_cast<std::size_t>(read_seq & index_mask);
         const auto first_count = std::min(values.size(), physical_capacity - index);
         const auto assign_segment =
-            [](spsc_queue_slot<T> * slots, std::span<T> output) noexcept(
+            [](storage::spsc_queue_slot<T> * slots, std::span<T> output) noexcept(
                 std::is_nothrow_assignable_v<T &, std::conditional_t<Move, T &&, const T &>>
             ) -> void {
             for (std::size_t offset = 0; offset < output.size(); ++offset) {
@@ -366,7 +379,7 @@ private:
 private:
     spsc_queue_cache_line * consumer_cache_line_;
     spsc_queue_cache_line * producer_cache_line_;
-    spsc_queue_slot<T> * slots_;
+    storage::spsc_queue_slot<T> * slots_;
     std::uint64_t local_read_seq_;
     std::uint64_t cached_read_limit_;
 
