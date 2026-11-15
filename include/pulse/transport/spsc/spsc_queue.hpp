@@ -23,6 +23,15 @@
 #include "pulse/transport/spsc/spsc_producer.hpp"
 #include "pulse/transport/spsc/spsc_storage.hpp"
 
+namespace pulse::channel::spsc
+{
+
+template <concepts::QueueElementType T, std::size_t Capacity>
+    requires concepts::QueueCapacityType<Capacity>
+class spsc_channel;
+
+} // namespace pulse::channel::spsc
+
 namespace pulse::transport::spsc
 {
 
@@ -32,7 +41,7 @@ template <concepts::QueueElementType T, std::size_t Capacity>
 class spsc_queue final
 {
 private:
-    using storage_type = spsc_queue_storage<T, Capacity>;
+    friend class pulse::channel::spsc::spsc_channel<T, Capacity>;
 
     class construction_key final
     {
@@ -44,7 +53,7 @@ private:
     };
 
 public:
-    explicit spsc_queue(construction_key, storage_type * storage, bool own_memory) noexcept
+    explicit spsc_queue(construction_key, spsc_queue_storage<T, Capacity> * storage, bool own_memory) noexcept
         : storage_(storage)
         , own_memory_(own_memory)
     {}
@@ -61,6 +70,10 @@ public:
     // Resolve producer reservations first; only published elements are cleaned up here.
     ~spsc_queue() noexcept
     {
+        if (!own_state_) {
+            return;
+        }
+
         if constexpr (!std::is_trivially_destructible_v<T>) {
             constexpr auto index_mask = std::bit_ceil(Capacity) - 1;
             auto read_seq = storage_->consumer_cache_line().seq.load(std::memory_order_relaxed);
@@ -84,8 +97,8 @@ public:
     [[nodiscard]]
     static auto create() noexcept -> common::result<spsc_queue>
     {
-        auto * storage = new (std::nothrow) storage_type;
-        if (storage == nullptr) {
+        auto * storage = new (std::nothrow) spsc_queue_storage<T, Capacity>;
+        if (storage == nullptr) [[unlikely]] {
             return std::unexpected(common::error {spsc_error_code::StorageAllocationFailed});
         }
 
@@ -98,32 +111,26 @@ public:
     [[nodiscard]]
     static auto create(std::span<std::byte> memory) noexcept -> common::result<spsc_queue>
     {
-        if (memory.data() == nullptr) {
-            return std::unexpected(common::error {spsc_error_code::StorageNull});
-        }
-        if (memory.size() < required_bytes()) {
-            return std::unexpected(common::error {spsc_error_code::StorageTooSmall});
-        }
-        if (reinterpret_cast<std::uintptr_t>(memory.data()) % required_alignment() != 0) {
-            return std::unexpected(common::error {spsc_error_code::StorageNotAligned});
+        auto storage = _initialize_storage(memory);
+        if (!storage) [[unlikely]] {
+            return std::unexpected(storage.error());
         }
 
-        auto * storage = ::new (static_cast<void *>(memory.data())) storage_type;
-        return common::result<spsc_queue>(std::in_place, construction_key {}, storage, false);
+        return common::result<spsc_queue>(std::in_place, construction_key {}, *storage, false);
     }
 
     // Return the required size of spsc_queue storage.
     [[nodiscard]]
     static constexpr auto required_bytes() noexcept -> std::size_t
     {
-        return sizeof(storage_type);
+        return sizeof(spsc_queue_storage<T, Capacity>);
     }
 
     // Return the required alignment of spsc_queue storage.
     [[nodiscard]]
     static constexpr auto required_alignment() noexcept -> std::size_t
     {
-        return alignof(storage_type);
+        return alignof(spsc_queue_storage<T, Capacity>);
     }
 
     // Each role may have only one open endpoint. Closing or destroying it allows reattachment.
@@ -133,7 +140,7 @@ public:
     auto try_attach_producer() noexcept -> std::optional<spsc_queue_producer<T, Capacity>>
     {
         bool expected = false;
-        const bool success = producer_attached_.compare_exchange_strong(
+        const auto success = producer_attached_.compare_exchange_strong(
             expected,
             true,
             std::memory_order_acquire,
@@ -157,7 +164,7 @@ public:
     auto try_attach_consumer() noexcept -> std::optional<spsc_queue_consumer<T, Capacity>>
     {
         bool expected = false;
-        const bool success = consumer_attached_.compare_exchange_strong(
+        const auto success = consumer_attached_.compare_exchange_strong(
             expected,
             true,
             std::memory_order_acquire,
@@ -177,10 +184,64 @@ public:
     }
 
 private:
-    storage_type * storage_;
+    // A channel owns the mapping and coordinates the shared state's lifetime.
+    // This view neither initializes nor destroys that state; nullptr is allowed for a moved-from channel.
+    explicit spsc_queue(spsc_queue_storage<T, Capacity> * storage) noexcept
+        : storage_(storage)
+        , own_memory_(false)
+        , own_state_(false)
+    {}
+
+    // Construct a new state once, without creating a queue owner for it.
+    [[nodiscard]]
+    static auto _initialize_storage(std::span<std::byte> memory) noexcept
+        -> common::result<spsc_queue_storage<T, Capacity> *>
+    {
+        if (memory.data() == nullptr) [[unlikely]] {
+            return std::unexpected(common::error {spsc_error_code::StorageNull});
+        }
+        if (memory.size() < required_bytes()) [[unlikely]] {
+            return std::unexpected(common::error {spsc_error_code::StorageTooSmall});
+        }
+        if (reinterpret_cast<std::uintptr_t>(memory.data()) % required_alignment() != 0) [[unlikely]] {
+            return std::unexpected(common::error {spsc_error_code::StorageNotAligned});
+        }
+
+        return ::new (static_cast<void *>(memory.data())) spsc_queue_storage<T, Capacity>;
+    }
+
+    // Only allowed to be called by channel.
+    [[nodiscard]]
+    auto try_attach_producer(std::atomic<bool> * attached) noexcept
+        -> std::optional<spsc_queue_producer<T, Capacity>>
+    {
+        return std::optional<spsc_queue_producer<T, Capacity>>(
+            std::in_place,
+            typename spsc_queue_producer<T, Capacity>::construction_key {},
+            *storage_,
+            attached
+        );
+    }
+
+    // Only allowed to be called by channel.
+    [[nodiscard]]
+    auto try_attach_consumer(std::atomic<bool> * attached) noexcept
+        -> std::optional<spsc_queue_consumer<T, Capacity>>
+    {
+        return std::optional<spsc_queue_consumer<T, Capacity>>(
+            std::in_place,
+            typename spsc_queue_consumer<T, Capacity>::construction_key {},
+            *storage_,
+            attached
+        );
+    }
+
+private:
+    spsc_queue_storage<T, Capacity> * storage_;
     std::atomic<bool> producer_attached_ {false};
     std::atomic<bool> consumer_attached_ {false};
     bool own_memory_;
+    bool own_state_ {true};
 };
 
 } // namespace pulse::transport::spsc
