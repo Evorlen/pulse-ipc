@@ -16,8 +16,7 @@ enum class spsc_error_code : std::uint8_t
     StorageNull = 1,
     StorageTooSmall = 2,
     StorageNotAligned = 3,
-    StorageInvalidMode = 4,
-    StorageAllocationFailed = 5,
+    StorageAllocationFailed = 4,
 };
 
 } // namespace pulse::transport::spsc

@@ -271,7 +271,7 @@ public:
     }
 
     // Destroy the borrowed element before allowing the producer to reuse its slot.
-    // Requires a successful peek. Call exactly once; do not mix ordinary consumption
+    // Requires a successful borrow. Call exactly once; do not mix ordinary consumption
     // with an outstanding borrow. Retiring an endpoint leaves peeks queued.
     auto release() noexcept -> void
     {

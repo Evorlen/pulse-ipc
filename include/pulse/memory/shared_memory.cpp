@@ -246,14 +246,7 @@ auto shared_memory::map() const noexcept -> common::result<mapped_region>
 
     void * address;
     do {
-        address = ::mmap(
-            nullptr,
-            size_,
-            PROT_READ | PROT_WRITE,
-            MAP_SHARED,
-            fd_,
-            0
-        );
+        address = ::mmap(nullptr, size_, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
     } while (address == MAP_FAILED && errno == EINTR);
 
     if (address == MAP_FAILED) {

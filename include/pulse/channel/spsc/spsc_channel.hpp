@@ -129,7 +129,8 @@ public:
         }
 
         auto bytes = region->bytes();
-        if (reinterpret_cast<std::uintptr_t>(bytes.data()) % alignof(spsc_channel_superblock) != 0) [[unlikely]] {
+        if (reinterpret_cast<std::uintptr_t>(bytes.data()) % alignof(spsc_channel_superblock) != 0)
+            [[unlikely]] {
             return _rollback_create(name, common::error {channel_error_code::RegionNotAligned});
         }
 
@@ -194,7 +195,8 @@ public:
         if (bytes.size() < sizeof(spsc_channel_superblock)) [[unlikely]] {
             return std::unexpected(common::error {channel_error_code::RegionTooSmall});
         }
-        if (reinterpret_cast<std::uintptr_t>(bytes.data()) % alignof(spsc_channel_superblock) != 0) [[unlikely]] {
+        if (reinterpret_cast<std::uintptr_t>(bytes.data()) % alignof(spsc_channel_superblock) != 0)
+            [[unlikely]] {
             return std::unexpected(common::error {channel_error_code::RegionNotAligned});
         }
 
@@ -218,10 +220,13 @@ public:
         }
 
         auto * address = bytes.data() + layout->queue_offset;
-        if (reinterpret_cast<std::uintptr_t>(address) % transport::spsc::spsc_queue<T, Capacity>::required_alignment() != 0) [[unlikely]] {
+        if (reinterpret_cast<std::uintptr_t>(address) %
+                transport::spsc::spsc_queue<T, Capacity>::required_alignment() !=
+            0) [[unlikely]] {
             return std::unexpected(common::error {transport::spsc::spsc_error_code::StorageNotAligned});
         }
-        auto * storage = std::launder(reinterpret_cast<transport::spsc::spsc_queue_storage<T, Capacity> *>(address));
+        auto * storage =
+            std::launder(reinterpret_cast<transport::spsc::spsc_queue_storage<T, Capacity> *>(address));
 
         return common::result<spsc_channel>(
             std::in_place,
