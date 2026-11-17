@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 
@@ -85,10 +86,12 @@ public:
         return consumer_cache_line_;
     }
 
-    // Return the slot at the given index. The caller must ensure that the index is valid.
+    // Return the slot at the given index. The caller must ensure that the index < physical_capacity.
     [[nodiscard]]
     auto slot(std::size_t index) noexcept -> storage::spsc_queue_slot<T> &
     {
+        assert(index < physical_capacity);
+
         return slots_[index];
     }
 
