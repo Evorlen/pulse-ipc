@@ -4,7 +4,8 @@ Checks: >
   bugprone-*,
   performance-*,
   portability-*,
-  modernize-*
+  modernize-*,
+  -bugprone-easily-swappable-parameters
 
 WarningsAsErrors: ''
 
