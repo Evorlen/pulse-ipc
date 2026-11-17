@@ -23,6 +23,8 @@
 #include "pulse/transport/spsc/spsc_producer.hpp"
 #include "pulse/transport/spsc/spsc_storage.hpp"
 
+static_assert(std::atomic<bool>::is_always_lock_free);
+
 namespace pulse::channel::spsc
 {
 

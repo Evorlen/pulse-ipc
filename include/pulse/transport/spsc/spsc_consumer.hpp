@@ -21,6 +21,8 @@
 #include "pulse/transport/spsc/spsc_batch_view.hpp"
 #include "pulse/transport/spsc/spsc_storage.hpp"
 
+static_assert(std::atomic<bool>::is_always_lock_free);
+
 namespace pulse::transport::spsc
 {
 
@@ -28,7 +30,7 @@ template <concepts::QueueElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
 class spsc_queue;
 
-// SPSC Queue Consumer.
+// SPSC queue consumer.
 template <concepts::QueueElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
 class alignas(config::cache_line_alignment) spsc_queue_consumer final

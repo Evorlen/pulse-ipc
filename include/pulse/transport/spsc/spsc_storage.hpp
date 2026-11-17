@@ -14,6 +14,8 @@
 #include "pulse/config/config.hpp"
 #include "pulse/storage/slot.hpp"
 
+static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
+
 namespace pulse::transport::spsc
 {
 
@@ -21,23 +23,15 @@ template <concepts::QueueElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
 class spsc_queue;
 
-static_assert(
-    std::atomic<std::uint64_t>::is_always_lock_free,
-    "std::atomic<std::uint64_t> must be always lock-free."
-);
-
 // Cache line for the producer and consumer.
 struct alignas(config::cache_line_alignment) spsc_queue_cache_line final
 {
     std::atomic<std::uint64_t> seq {0};
 };
 
-static_assert(
-    sizeof(spsc_queue_cache_line) == config::cache_line_alignment,
-    "the size of spsc_queue_cache_line must be equal to cache_line_alignment."
-);
+static_assert(sizeof(spsc_queue_cache_line) == config::cache_line_alignment);
 
-// Storage for the SPSC queue.
+// SPSC queue storage.
 template <concepts::QueueElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
 class spsc_queue_storage final
