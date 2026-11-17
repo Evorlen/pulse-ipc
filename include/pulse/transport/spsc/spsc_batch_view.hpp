@@ -22,7 +22,7 @@ template <concepts::QueueElementType T, bool Constructed>
 class basic_spsc_queue_batch_view final
 {
 public:
-    using reference = std::conditional_t<Constructed, T &, T *>;
+    using reference_type = std::conditional_t<Constructed, T &, T *>;
 
     // A segment of the batch view.
     class segment_type final
@@ -56,7 +56,7 @@ public:
 
         // Raw views return an address for construct_at; live views return an existing element. Caller must check index < size().
         [[nodiscard]]
-        auto operator[](std::size_t index) const noexcept -> reference
+        auto operator[](std::size_t index) const noexcept -> reference_type
         {
             assert(index < size());
 
@@ -125,7 +125,7 @@ public:
 
     // Return the element at the given index. Caller must check index < size().
     [[nodiscard]]
-    auto operator[](std::size_t index) const noexcept -> reference
+    auto operator[](std::size_t index) const noexcept -> reference_type
     {
         assert(index < size());
 
