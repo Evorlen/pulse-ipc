@@ -13,10 +13,9 @@ namespace pulse::transport::spsc
 // Error codes for the SPSC queue.
 enum class spsc_error_code : std::uint8_t
 {
-    StorageNull = 1,
+    InvalidStorage = 1,
     StorageTooSmall = 2,
     StorageNotAligned = 3,
-    StorageAllocationFailed = 4,
 };
 
 } // namespace pulse::transport::spsc

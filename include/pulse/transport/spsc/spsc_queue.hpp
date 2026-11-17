@@ -37,7 +37,15 @@ class spsc_channel;
 namespace pulse::transport::spsc
 {
 
-// SPSC Queue.
+// Ownership of the spsc queue storage.
+enum class spsc_queue_storage_ownership : std::uint8_t
+{
+    Heap_owned = 0,
+    In_place_owned = 1,
+    Borrowed = 2,
+};
+
+// SPSC queue.
 template <concepts::QueueElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
 class spsc_queue final
@@ -55,9 +63,13 @@ private:
     };
 
 public:
-    explicit spsc_queue(construction_key, spsc_queue_storage<T, Capacity> * storage, bool own_memory) noexcept
+    explicit spsc_queue(
+        construction_key,
+        spsc_queue_storage<T, Capacity> * storage,
+        spsc_queue_storage_ownership ownership
+    ) noexcept
         : storage_(storage)
-        , own_memory_(own_memory)
+        , ownership_(ownership)
     {}
 
     spsc_queue(const spsc_queue &) = delete;
@@ -72,12 +84,14 @@ public:
     // Resolve producer reservations first; only published elements are cleaned up here.
     ~spsc_queue() noexcept
     {
-        if (!own_state_) {
+        if (ownership_ == spsc_queue_storage_ownership::Borrowed) {
             return;
         }
 
         if constexpr (!std::is_trivially_destructible_v<T>) {
             constexpr auto index_mask = std::bit_ceil(Capacity) - 1;
+
+            // Destroy elements from read sequence to write sequence.
             auto read_seq = storage_->consumer_cache_line().seq.load(std::memory_order_relaxed);
             const auto write_seq = storage_->producer_cache_line().seq.load(std::memory_order_relaxed);
 
@@ -87,24 +101,33 @@ public:
             }
         }
 
-        if (own_memory_) {
+        if (ownership_ == spsc_queue_storage_ownership::Heap_owned) {
             delete storage_;
         } else {
+            // In-place owned.
             std::destroy_at(storage_);
         }
     }
 
+private:
+    // A channel validates storage and coordinates the shared state's lifetime.
+    explicit spsc_queue(spsc_queue_storage<T, Capacity> * storage) noexcept
+        : spsc_queue(construction_key {}, storage, spsc_queue_storage_ownership::Borrowed)
+    {}
+
 public:
     // Allocate aligned storage and initialize an empty queue.
     [[nodiscard]]
-    static auto create() noexcept -> common::result<spsc_queue>
+    static auto create() -> common::result<spsc_queue>
     {
-        auto * storage = new (std::nothrow) spsc_queue_storage<T, Capacity>;
-        if (storage == nullptr) [[unlikely]] {
-            return std::unexpected(common::error {spsc_error_code::StorageAllocationFailed});
-        }
+        auto * storage = new spsc_queue_storage<T, Capacity>;
 
-        return common::result<spsc_queue>(std::in_place, construction_key {}, storage, true);
+        return common::result<spsc_queue>(
+            std::in_place,
+            construction_key {},
+            storage,
+            spsc_queue_storage_ownership::Heap_owned
+        );
     }
 
     // Initialize an empty queue in unused, writable storage with exclusive access.
@@ -118,7 +141,12 @@ public:
             return std::unexpected(storage.error());
         }
 
-        return common::result<spsc_queue>(std::in_place, construction_key {}, *storage, false);
+        return common::result<spsc_queue>(
+            std::in_place,
+            construction_key {},
+            *storage,
+            spsc_queue_storage_ownership::In_place_owned
+        );
     }
 
     // Return the required size of spsc_queue storage.
@@ -135,9 +163,9 @@ public:
         return alignof(spsc_queue_storage<T, Capacity>);
     }
 
-    // Each role may have only one open endpoint. Closing or destroying it allows reattachment.
+    // Each role may have only one open producer. Closing or destroying it allows reattachment.
     // Reattachment preserves queued elements and sequence numbers.
-    // Concurrent attachment is allowed; endpoints borrow the queue.
+    // Concurrent attachment is allowed; producer borrows the queue.
     [[nodiscard]]
     auto try_attach_producer() noexcept -> std::optional<spsc_queue_producer<T, Capacity>>
     {
@@ -161,7 +189,9 @@ public:
         );
     }
 
-    // The same attachment and lifetime rules apply to the consumer.
+    // Each role may have only one open consumer. Closing or destroying it allows reattachment.
+    // Reattachment preserves queued elements and sequence numbers.
+    // Concurrent attachment is allowed; consumer borrows the queue.
     [[nodiscard]]
     auto try_attach_consumer() noexcept -> std::optional<spsc_queue_consumer<T, Capacity>>
     {
@@ -186,21 +216,14 @@ public:
     }
 
 private:
-    // A channel owns the mapping and coordinates the shared state's lifetime.
-    // This view neither initializes nor destroys that state; nullptr is allowed for a moved-from channel.
-    explicit spsc_queue(spsc_queue_storage<T, Capacity> * storage) noexcept
-        : storage_(storage)
-        , own_memory_(false)
-        , own_state_(false)
-    {}
-
-    // Construct a new state once, without creating a queue owner for it.
+    // Initialize unused, writable storage with exclusive access, without creating a queue owner.
+    // The caller coordinates the new state's lifetime independently of the allocation.
     [[nodiscard]]
     static auto _initialize_storage(std::span<std::byte> memory) noexcept
         -> common::result<spsc_queue_storage<T, Capacity> *>
     {
         if (memory.data() == nullptr) [[unlikely]] {
-            return std::unexpected(common::error {spsc_error_code::StorageNull});
+            return std::unexpected(common::error {spsc_error_code::InvalidStorage});
         }
         if (memory.size() < required_bytes()) [[unlikely]] {
             return std::unexpected(common::error {spsc_error_code::StorageTooSmall});
@@ -212,9 +235,9 @@ private:
         return ::new (static_cast<void *>(memory.data())) spsc_queue_storage<T, Capacity>;
     }
 
-    // Only allowed to be called by channel.
+    // Only allowed to be called by channel, which will pass an atomic flag to track attachment.
     [[nodiscard]]
-    auto try_attach_producer(std::atomic<bool> * attached) noexcept
+    auto _try_attach_producer(std::atomic<bool> * attached) noexcept
         -> std::optional<spsc_queue_producer<T, Capacity>>
     {
         return std::optional<spsc_queue_producer<T, Capacity>>(
@@ -225,9 +248,9 @@ private:
         );
     }
 
-    // Only allowed to be called by channel.
+    // Only allowed to be called by channel, which will pass an atomic flag to track attachment.
     [[nodiscard]]
-    auto try_attach_consumer(std::atomic<bool> * attached) noexcept
+    auto _try_attach_consumer(std::atomic<bool> * attached) noexcept
         -> std::optional<spsc_queue_consumer<T, Capacity>>
     {
         return std::optional<spsc_queue_consumer<T, Capacity>>(
@@ -242,8 +265,7 @@ private:
     spsc_queue_storage<T, Capacity> * storage_;
     std::atomic<bool> producer_attached_ {false};
     std::atomic<bool> consumer_attached_ {false};
-    bool own_memory_;
-    bool own_state_ {true};
+    spsc_queue_storage_ownership ownership_;
 };
 
 } // namespace pulse::transport::spsc

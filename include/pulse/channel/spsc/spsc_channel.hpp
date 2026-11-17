@@ -255,7 +255,7 @@ public:
             return std::nullopt;
         }
 
-        return queue_.try_attach_producer(&superblock_->producer_attached);
+        return queue_._try_attach_producer(&superblock_->producer_attached);
     }
 
     [[nodiscard]]
@@ -276,7 +276,7 @@ public:
             return std::nullopt;
         }
 
-        return queue_.try_attach_consumer(&superblock_->consumer_attached);
+        return queue_._try_attach_consumer(&superblock_->consumer_attached);
     }
 
 private:
