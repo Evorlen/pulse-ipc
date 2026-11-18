@@ -4,7 +4,9 @@ function(pulse_ipc_add_example module_name example_name)
 endfunction()
 
 pulse_ipc_add_example(spsc_queue spsc_queue)
+pulse_ipc_add_example(spsc_queue spsc_queue_in_place)
 pulse_ipc_add_example(spsc_channel spsc_channel)
 
 find_package(Threads REQUIRED)
 target_link_libraries(spsc_queue PRIVATE Threads::Threads)
+target_link_libraries(spsc_queue_in_place PRIVATE Threads::Threads)

@@ -56,11 +56,9 @@ auto produce(queue_type & queue, std::atomic<int> & status) -> void
                 const auto kind = sequence_id + 1 == message_count ? Kind::End : Kind::Data;
                 std::construct_at(
                     segment[index],
-                    Message {
-                        .sequence_id = sequence_id,
-                        .kind = kind,
-                        .message = kind == Kind::End ? "end" : "pulse",
-                    }
+                    sequence_id,
+                    kind,
+                    kind == Kind::End ? "end" : "pulse"
                 );
                 ++sequence_id;
             }
