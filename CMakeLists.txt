@@ -61,3 +61,7 @@ if(PULSE_IPC_BENCH)
 
     # add_subdirectory(benchmarks)
 endif()
+
+if(PULSE_IPC_EXAMPLE)
+    add_subdirectory(examples)
+endif()
