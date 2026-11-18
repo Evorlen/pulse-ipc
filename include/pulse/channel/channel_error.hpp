@@ -10,8 +10,8 @@
 namespace pulse::channel
 {
 
-// Errors from channel layout and protocol validation.
-// Mapping and queue-storage failures stay in memory_error_code and spsc_error_code.
+// Errors from channel state, layout, and protocol validation.
+// Mapping failures stay in memory_error_code; queue-storage and attachment failures stay in spsc_error_code.
 enum class channel_error_code : std::uint8_t
 {
     RegionTooSmall = 1,
@@ -28,6 +28,7 @@ enum class channel_error_code : std::uint8_t
     ElementAlignmentMismatch = 12,
     SchemaMismatch = 13,
     UnsupportedFlags = 14,
+    NotOpen = 15,
 };
 
 } // namespace pulse::channel

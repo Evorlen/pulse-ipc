@@ -16,6 +16,8 @@ enum class spsc_error_code : std::uint8_t
     InvalidStorage = 1,
     StorageTooSmall = 2,
     StorageNotAligned = 3,
+    ProducerAlreadyAttached = 4,
+    ConsumerAlreadyAttached = 5,
 };
 
 } // namespace pulse::transport::spsc

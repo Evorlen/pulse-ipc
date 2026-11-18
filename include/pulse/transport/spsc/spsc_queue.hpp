@@ -10,7 +10,6 @@
 #include <expected>
 #include <memory>
 #include <new>
-#include <optional>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -168,53 +167,21 @@ public:
     // Each role may have only one open producer. Closing or destroying it allows reattachment.
     // Reattachment preserves queued elements and sequence numbers.
     // Concurrent attachment is allowed; producer borrows the queue.
+    // Return ProducerAlreadyAttached if the role is occupied.
     [[nodiscard]]
-    auto try_attach_producer() noexcept -> std::optional<spsc_queue_producer<T, Capacity>>
+    auto try_attach_producer() noexcept -> common::result<spsc_queue_producer<T, Capacity>>
     {
-        bool expected = false;
-        const auto success = producer_attached_.compare_exchange_strong(
-            expected,
-            true,
-            std::memory_order_acquire,
-            std::memory_order_relaxed
-        );
-
-        if (!success) {
-            return std::nullopt;
-        }
-
-        return std::optional<spsc_queue_producer<T, Capacity>>(
-            std::in_place,
-            typename spsc_queue_producer<T, Capacity>::construction_key {},
-            *storage_,
-            &producer_attached_
-        );
+        return _try_attach_producer(&producer_attached_);
     }
 
     // Each role may have only one open consumer. Closing or destroying it allows reattachment.
     // Reattachment preserves queued elements and sequence numbers.
     // Concurrent attachment is allowed; consumer borrows the queue.
+    // Return ConsumerAlreadyAttached if the role is occupied.
     [[nodiscard]]
-    auto try_attach_consumer() noexcept -> std::optional<spsc_queue_consumer<T, Capacity>>
+    auto try_attach_consumer() noexcept -> common::result<spsc_queue_consumer<T, Capacity>>
     {
-        bool expected = false;
-        const auto success = consumer_attached_.compare_exchange_strong(
-            expected,
-            true,
-            std::memory_order_acquire,
-            std::memory_order_relaxed
-        );
-
-        if (!success) {
-            return std::nullopt;
-        }
-
-        return std::optional<spsc_queue_consumer<T, Capacity>>(
-            std::in_place,
-            typename spsc_queue_consumer<T, Capacity>::construction_key {},
-            *storage_,
-            &consumer_attached_
-        );
+        return _try_attach_consumer(&consumer_attached_);
     }
 
 private:
@@ -237,12 +204,23 @@ private:
         return ::new (static_cast<void *>(memory.data())) spsc_queue_storage<T, Capacity>;
     }
 
-    // Only allowed to be called by channel, which will pass an atomic flag to track attachment.
+    // Claim the producer role using a local or shared attachment flag.
     [[nodiscard]]
     auto _try_attach_producer(std::atomic<bool> * attached) noexcept
-        -> std::optional<spsc_queue_producer<T, Capacity>>
+        -> common::result<spsc_queue_producer<T, Capacity>>
     {
-        return std::optional<spsc_queue_producer<T, Capacity>>(
+        bool expected = false;
+        const auto success = attached->compare_exchange_strong(
+            expected,
+            true,
+            std::memory_order_acquire,
+            std::memory_order_relaxed
+        );
+        if (!success) {
+            return std::unexpected(common::error {spsc_error_code::ProducerAlreadyAttached});
+        }
+
+        return common::result<spsc_queue_producer<T, Capacity>>(
             std::in_place,
             typename spsc_queue_producer<T, Capacity>::construction_key {},
             *storage_,
@@ -250,12 +228,23 @@ private:
         );
     }
 
-    // Only allowed to be called by channel, which will pass an atomic flag to track attachment.
+    // Claim the consumer role using a local or shared attachment flag.
     [[nodiscard]]
     auto _try_attach_consumer(std::atomic<bool> * attached) noexcept
-        -> std::optional<spsc_queue_consumer<T, Capacity>>
+        -> common::result<spsc_queue_consumer<T, Capacity>>
     {
-        return std::optional<spsc_queue_consumer<T, Capacity>>(
+        bool expected = false;
+        const auto success = attached->compare_exchange_strong(
+            expected,
+            true,
+            std::memory_order_acquire,
+            std::memory_order_relaxed
+        );
+        if (!success) {
+            return std::unexpected(common::error {spsc_error_code::ConsumerAlreadyAttached});
+        }
+
+        return common::result<spsc_queue_consumer<T, Capacity>>(
             std::in_place,
             typename spsc_queue_consumer<T, Capacity>::construction_key {},
             *storage_,

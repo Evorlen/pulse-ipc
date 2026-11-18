@@ -237,43 +237,23 @@ public:
         );
     }
 
+    // Return NotOpen for a moved-from channel, or ProducerAlreadyAttached if the shared role is occupied.
     [[nodiscard]]
-    auto try_attach_producer() noexcept -> std::optional<transport::spsc::spsc_queue_producer<T, Capacity>>
+    auto try_attach_producer() noexcept -> common::result<transport::spsc::spsc_queue_producer<T, Capacity>>
     {
         if (superblock_ == nullptr) [[unlikely]] {
-            return std::nullopt;
-        }
-
-        bool expected = false;
-        const auto success = superblock_->producer_attached.compare_exchange_strong(
-            expected,
-            true,
-            std::memory_order_acquire,
-            std::memory_order_relaxed
-        );
-        if (!success) {
-            return std::nullopt;
+            return std::unexpected(common::error {channel_error_code::NotOpen});
         }
 
         return queue_._try_attach_producer(&superblock_->producer_attached);
     }
 
+    // Return NotOpen for a moved-from channel, or ConsumerAlreadyAttached if the shared role is occupied.
     [[nodiscard]]
-    auto try_attach_consumer() noexcept -> std::optional<transport::spsc::spsc_queue_consumer<T, Capacity>>
+    auto try_attach_consumer() noexcept -> common::result<transport::spsc::spsc_queue_consumer<T, Capacity>>
     {
         if (superblock_ == nullptr) [[unlikely]] {
-            return std::nullopt;
-        }
-
-        bool expected = false;
-        const auto success = superblock_->consumer_attached.compare_exchange_strong(
-            expected,
-            true,
-            std::memory_order_acquire,
-            std::memory_order_relaxed
-        );
-        if (!success) {
-            return std::nullopt;
+            return std::unexpected(common::error {channel_error_code::NotOpen});
         }
 
         return queue_._try_attach_consumer(&superblock_->consumer_attached);
