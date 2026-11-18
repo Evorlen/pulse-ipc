@@ -25,6 +25,8 @@ option(PULSE_IPC_TEST "Build test targets" OFF)
 option(PULSE_IPC_BENCH "Build benchmark targets" OFF)
 option(PULSE_IPC_EXAMPLE "Build example targets" OFF)
 
+add_subdirectory(src)
+
 include(FetchContent)
 
 if(PULSE_IPC_TEST)
