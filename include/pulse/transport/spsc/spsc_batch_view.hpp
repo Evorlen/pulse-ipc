@@ -18,7 +18,7 @@ namespace pulse::transport::spsc
 // The underlying array contains slots, not T objects forming a T array; index through the slots.
 // Views and their segments must not outlive their endpoint or the queue state owner.
 // Closing the endpoint invalidates its views and segments even if the endpoint object stays alive.
-template <concepts::QueueElementType T, bool Constructed>
+template <concepts::IntraProcessElementType T, bool Constructed>
 class basic_spsc_queue_batch_view final
 {
 public:
@@ -73,11 +73,11 @@ public:
     };
 
 private:
-    template <concepts::QueueElementType U, std::size_t Capacity>
+    template <concepts::IntraProcessElementType U, std::size_t Capacity>
         requires concepts::QueueCapacityType<Capacity>
     friend class spsc_queue_producer;
 
-    template <concepts::QueueElementType U, std::size_t Capacity>
+    template <concepts::IntraProcessElementType U, std::size_t Capacity>
         requires concepts::QueueCapacityType<Capacity>
     friend class spsc_queue_consumer;
 
@@ -137,10 +137,10 @@ private:
     segment_type second_;
 };
 
-template <concepts::QueueElementType T>
+template <concepts::IntraProcessElementType T>
 using spsc_queue_write_view = basic_spsc_queue_batch_view<T, false>;
 
-template <concepts::QueueElementType T>
+template <concepts::IntraProcessElementType T>
 using spsc_queue_read_view = basic_spsc_queue_batch_view<T, true>;
 
 } // namespace pulse::transport::spsc

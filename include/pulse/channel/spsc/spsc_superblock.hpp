@@ -9,6 +9,9 @@
 #include <cstdint>
 #include <type_traits>
 
+static_assert(std::atomic<std::uint8_t>::is_always_lock_free);
+static_assert(std::atomic<bool>::is_always_lock_free);
+
 namespace pulse::channel::spsc
 {
 
@@ -32,8 +35,6 @@ struct spsc_channel_superblock final
 };
 
 static_assert(std::is_standard_layout_v<spsc_channel_superblock>);
-static_assert(std::atomic<std::uint8_t>::is_always_lock_free);
-static_assert(std::atomic<bool>::is_always_lock_free);
 
 enum class spsc_channel_state : std::uint8_t
 {

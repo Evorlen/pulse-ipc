@@ -33,7 +33,7 @@
 namespace pulse::channel::spsc
 {
 
-template <concepts::QueueElementType T, std::size_t Capacity>
+template <concepts::InterProcessElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
 class spsc_channel final
 {

@@ -20,7 +20,7 @@ static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
 namespace pulse::transport::spsc
 {
 
-template <concepts::QueueElementType T, std::size_t Capacity>
+template <concepts::IntraProcessElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
 class spsc_queue;
 
@@ -33,7 +33,7 @@ struct alignas(config::cache_line_alignment) spsc_queue_cache_line final
 static_assert(sizeof(spsc_queue_cache_line) == config::cache_line_alignment);
 
 // SPSC queue storage.
-template <concepts::QueueElementType T, std::size_t Capacity>
+template <concepts::IntraProcessElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
 class spsc_queue_storage final
 {

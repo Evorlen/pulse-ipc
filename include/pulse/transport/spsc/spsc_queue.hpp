@@ -28,8 +28,8 @@ static_assert(std::atomic<bool>::is_always_lock_free);
 namespace pulse::channel::spsc
 {
 
-template <concepts::QueueElementType T, std::size_t Capacity>
-    requires concepts::QueueCapacityType<Capacity>
+template <concepts::InterProcessElementType U, std::size_t OtherCapacity>
+    requires concepts::QueueCapacityType<OtherCapacity>
 class spsc_channel;
 
 } // namespace pulse::channel::spsc
@@ -46,12 +46,14 @@ enum class spsc_queue_storage_ownership : std::uint8_t
 };
 
 // SPSC queue.
-template <concepts::QueueElementType T, std::size_t Capacity>
+template <concepts::IntraProcessElementType T, std::size_t Capacity>
     requires concepts::QueueCapacityType<Capacity>
 class spsc_queue final
 {
 private:
-    friend class pulse::channel::spsc::spsc_channel<T, Capacity>;
+    template <concepts::InterProcessElementType U, std::size_t OtherCapacity>
+        requires concepts::QueueCapacityType<OtherCapacity>
+    friend class pulse::channel::spsc::spsc_channel;
 
     class construction_key final
     {

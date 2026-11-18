@@ -12,7 +12,7 @@ namespace pulse::storage
 {
 
 // Slot for the queue.
-template <concepts::QueueElementType T>
+template <concepts::IntraProcessElementType T>
 class alignas(T) spsc_queue_slot final
 {
 private:
