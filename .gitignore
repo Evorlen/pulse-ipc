@@ -38,3 +38,6 @@ CMakeUserPresets.json
 
 # Clangd files.
 .clangd
+
+# Python cache files.
+__pycache__/
