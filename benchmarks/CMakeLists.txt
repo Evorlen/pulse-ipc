@@ -24,4 +24,4 @@ function(pulse_ipc_add_benchmark module_name benchmark_name)
 endfunction()
 
 pulse_ipc_add_benchmark(spsc_queue spsc_queue_throughput)
-
+pulse_ipc_add_benchmark(spsc_queue spsc_queue_rtt)
