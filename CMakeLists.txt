@@ -59,7 +59,7 @@ if(PULSE_IPC_BENCH)
 
     FetchContent_MakeAvailable(benchmark)
 
-    # add_subdirectory(benchmarks)
+    add_subdirectory(benchmarks)
 endif()
 
 if(PULSE_IPC_EXAMPLE)
